@@ -18,3 +18,9 @@ variable "resource_group_name" {
   description = "Name of the (pre-created) resource group to deploy into."
   type        = string
 }
+
+variable "public_feeds" {
+  description = "Comma-separated list of feeds (apps, runtime, symbols) served without authentication. Empty means all feeds are private."
+  type        = string
+  default     = ""
+}

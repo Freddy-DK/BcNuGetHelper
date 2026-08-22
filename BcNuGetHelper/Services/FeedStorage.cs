@@ -1,40 +1,97 @@
+using System.Collections.Concurrent;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Microsoft.Extensions.Hosting;
 
 namespace BcNuGetHelper.Services;
 
 /// <summary>
 /// Stores packages as blobs using a NuGet flat-container-friendly layout:
 /// packages/{feed}/{packageIdLower}/{versionLower}/{packageIdLower}.{versionLower}.nupkg
+/// The package list per feed is scanned once at startup, kept in memory and updated on upload.
 /// </summary>
 public class FeedStorage(BlobServiceClient blobServiceClient)
 {
     private readonly BlobContainerClient _container = blobServiceClient.GetBlobContainerClient("packages");
+    private readonly SemaphoreSlim _lock = new(1, 1);
+    // feed -> package id -> sorted versions; snapshots replaced wholesale so reads are lock-free
+    private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> _cache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task LoadAsync(CancellationToken ct = default)
+    {
+        foreach (var feed in PackageBuilder.Feeds)
+        {
+            _cache[feed] = await ScanFeedAsync(feed, ct);
+        }
+    }
 
     public async Task SavePackageAsync(string feed, string packageId, string version, byte[] nupkg, CancellationToken ct)
     {
+        feed = feed.ToLowerInvariant();
+        // Ensure the feed cache exists before updating it below
+        await ListPackagesAsync(feed, ct);
+
         await _container.CreateIfNotExistsAsync(cancellationToken: ct);
         var blob = _container.GetBlobClient(BlobPath(feed, packageId, version));
         await blob.UploadAsync(new BinaryData(nupkg), overwrite: true, cancellationToken: ct);
+
+        await _lock.WaitAsync(ct);
+        try
+        {
+            var current = _cache.GetValueOrDefault(feed) ?? EmptyFeed;
+            var updated = current.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+            var id = packageId.ToLowerInvariant();
+            var v = version.ToLowerInvariant();
+            var versions = updated.GetValueOrDefault(id)?.ToList() ?? [];
+            if (!versions.Contains(v))
+            {
+                versions.Add(v);
+            }
+            updated[id] = VersionHelper.Sort(versions).ToList();
+            _cache[feed] = updated;
+        }
+        finally
+        {
+            _lock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<string>> GetVersionsAsync(string feed, string packageId, CancellationToken ct)
     {
-        var prefix = $"{feed}/{packageId.ToLowerInvariant()}/";
-        var versions = new List<string>();
-        await foreach (var blob in _container.GetBlobsAsync(prefix: prefix, cancellationToken: ct))
-        {
-            var segments = blob.Name.Split('/');
-            if (segments.Length == 4)
-            {
-                versions.Add(segments[2]);
-            }
-        }
-        return VersionHelper.Sort(versions.Distinct()).ToList();
+        var packages = await ListPackagesAsync(feed, ct);
+        return packages.GetValueOrDefault(packageId.ToLowerInvariant()) ?? [];
     }
 
     public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ListPackagesAsync(string feed, CancellationToken ct)
+    {
+        feed = feed.ToLowerInvariant();
+        if (_cache.TryGetValue(feed, out var packages))
+        {
+            return packages;
+        }
+
+        await _lock.WaitAsync(ct);
+        try
+        {
+            if (!_cache.TryGetValue(feed, out packages))
+            {
+                packages = await ScanFeedAsync(feed, ct);
+                _cache[feed] = packages;
+            }
+            return packages;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> EmptyFeed =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+    private async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ScanFeedAsync(string feed, CancellationToken ct)
     {
         var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         try
@@ -60,7 +117,8 @@ public class FeedStorage(BlobServiceClient blobServiceClient)
         }
         return result.ToDictionary(
             kvp => kvp.Key,
-            kvp => (IReadOnlyList<string>)VersionHelper.Sort(kvp.Value.Distinct()).ToList());
+            kvp => (IReadOnlyList<string>)VersionHelper.Sort(kvp.Value.Distinct()).ToList(),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     public async Task<Stream?> OpenPackageAsync(string feed, string packageId, string version, CancellationToken ct)
@@ -94,4 +152,12 @@ public class FeedStorage(BlobServiceClient blobServiceClient)
         var v = version.ToLowerInvariant();
         return $"{feed}/{id}/{v}/{id}.{v}.nupkg";
     }
+}
+
+/// <summary>Scans the package blobs into memory during startup.</summary>
+public class FeedStorageLoader(FeedStorage storage) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken) => storage.LoadAsync(cancellationToken);
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

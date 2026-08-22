@@ -31,5 +31,9 @@ builder.Services.AddSingleton(_ =>
 });
 
 builder.Services.AddSingleton<FeedStorage>();
+builder.Services.AddHostedService<FeedStorageLoader>();
+builder.Services.AddSingleton<AccessKeyStore>();
+builder.Services.AddHostedService<AccessKeyStoreLoader>();
+builder.Services.AddSingleton<AlTool>();
 
 builder.Build().Run();

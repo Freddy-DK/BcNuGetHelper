@@ -1,3 +1,4 @@
+using System.Text;
 using BcNuGetHelper.Models;
 using BcNuGetHelper.Services;
 using Microsoft.AspNetCore.Http;
@@ -10,16 +11,21 @@ namespace BcNuGetHelper.Functions;
 /// Read-only NuGet v3 feed endpoints (service index, search, flat container),
 /// served per feed: apps, runtime and symbols.
 /// </summary>
-public class NuGetFeedFunctions(FeedStorage storage)
+public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
 {
     [Function("ServiceIndex")]
-    public IActionResult ServiceIndex(
+    public async Task<IActionResult> ServiceIndex(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{feed}/index.json")] HttpRequest req,
-        string feed)
+        string feed,
+        CancellationToken ct)
     {
         if (!IsValidFeed(feed))
         {
             return new NotFoundResult();
+        }
+        if (!await IsAuthorizedAsync(req, feed, ct))
+        {
+            return Unauthorized(req);
         }
 
         var baseUrl = FeedBaseUrl(req, feed);
@@ -41,6 +47,10 @@ public class NuGetFeedFunctions(FeedStorage storage)
         if (!IsValidFeed(feed))
         {
             return new NotFoundResult();
+        }
+        if (!await IsAuthorizedAsync(req, feed, ct))
+        {
+            return Unauthorized(req);
         }
 
         var q = req.Query["q"].ToString();
@@ -83,6 +93,10 @@ public class NuGetFeedFunctions(FeedStorage storage)
         {
             return new NotFoundResult();
         }
+        if (!await IsAuthorizedAsync(req, feed, ct))
+        {
+            return Unauthorized(req);
+        }
 
         var versions = await storage.GetVersionsAsync(feed, id, ct);
         if (versions.Count == 0)
@@ -105,6 +119,10 @@ public class NuGetFeedFunctions(FeedStorage storage)
         {
             return new NotFoundResult();
         }
+        if (!await IsAuthorizedAsync(req, feed, ct))
+        {
+            return Unauthorized(req);
+        }
 
         var stream = await storage.OpenPackageAsync(feed, id, version, ct);
         if (stream is null)
@@ -115,6 +133,61 @@ public class NuGetFeedFunctions(FeedStorage storage)
         {
             FileDownloadName = $"{id.ToLowerInvariant()}.{version.ToLowerInvariant()}.nupkg",
         };
+    }
+
+    private static readonly HashSet<string> PublicFeeds = new(
+        (Environment.GetEnvironmentVariable("PublicFeeds") ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        StringComparer.OrdinalIgnoreCase);
+
+    private async Task<bool> IsAuthorizedAsync(HttpRequest req, string feed, CancellationToken ct)
+    {
+        if (PublicFeeds.Contains(feed))
+        {
+            return true;
+        }
+        var token = ExtractToken(req);
+        if (string.IsNullOrEmpty(token))
+        {
+            return false;
+        }
+        var accessKey = await accessKeys.FindByKeyAsync(token, ct);
+        return accessKey is not null && accessKey.Feeds.Contains(feed, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? ExtractToken(HttpRequest req)
+    {
+        var auth = req.Headers.Authorization.ToString();
+        if (auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            return auth[7..].Trim();
+        }
+        if (auth.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                // NuGet clients send the token as the password part of basic credentials
+                var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(auth[6..].Trim()));
+                var separator = decoded.IndexOf(':');
+                return separator >= 0 ? decoded[(separator + 1)..] : decoded;
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
+        }
+        if (req.Headers.TryGetValue("X-NuGet-ApiKey", out var apiKey))
+        {
+            return apiKey.ToString();
+        }
+        var query = req.Query["token"].ToString();
+        return string.IsNullOrEmpty(query) ? null : query;
+    }
+
+    private static UnauthorizedResult Unauthorized(HttpRequest req)
+    {
+        req.HttpContext.Response.Headers.WWWAuthenticate = "Basic realm=\"BcNuGetHelper\"";
+        return new UnauthorizedResult();
     }
 
     private static bool IsValidFeed(string feed) =>

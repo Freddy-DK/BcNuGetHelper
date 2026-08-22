@@ -16,7 +16,7 @@ All apps are uploaded once and served through three read-only NuGet v3 feeds:
 |------|-------------------|---------|
 | `apps` | `https://<functionapp>.azurewebsites.net/api/apps/index.json` | Full .app files |
 | `runtime` | `https://<functionapp>.azurewebsites.net/api/runtime/index.json` | Runtime packages (transformation added during upload — coming later) |
-| `symbols` | `https://<functionapp>.azurewebsites.net/api/symbols/index.json` | Symbols only |
+| `symbols` | `https://<functionapp>.azurewebsites.net/api/symbols/index.json` | Symbols-only packages (created with altool during upload) |
 
 Each feed implements the NuGet v3 resources needed by [BcContainerHelper](https://github.com/microsoft/navcontainerhelper)'s NuGet search functionality:
 
@@ -30,7 +30,33 @@ There is no NuGet push/publish support. All uploads go through the upload endpoi
 
 - **Upload** — `POST api/upload` (requires a [function key](https://learn.microsoft.com/azure/azure-functions/function-keys-how-to) via `x-functions-key` header or `?code=` query parameter). Accepts a raw `.app` file body or `multipart/form-data` with one or more `.app` files (Business Central apps and their dependencies).
 
-Uploaded apps are parsed (id, name, publisher, version, dependencies from the app manifest), wrapped as NuGet packages with dependency information, and stored under `{feed}/{packageId}/{version}/` in the `packages` blob container.
+Uploaded apps are processed with the [AL development tools](https://learn.microsoft.com/dynamics365/business-central/dev-itpro/developer/devenv-al-tool-package) (`altool`, bundled with the deployment): the manifest (id, name, publisher, version, dependencies) is extracted, a symbols-only package is created for the symbols feed, and everything is wrapped as NuGet packages with dependency information and stored under `{feed}/{packageId}/{version}/` in the `packages` blob container.
+
+## Public and private feeds
+
+Each feed is either **public** (anonymous read access) or **private** (requires an access key). Which feeds are public is controlled by the `PUBLIC_FEEDS` repository variable; all feeds are private by default.
+
+Access keys are managed through function-key protected endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET api/accesskeys/{name}` | Get an access key (name, key and feeds) |
+| `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"] }` — the feeds the key grants access to. Returns the generated key |
+| `DELETE api/accesskeys/{name}` | Remove an access key |
+
+```powershell
+$functionKey = "<your function key>"
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "https://<functionapp>.azurewebsites.net/api/accesskeys/partner1" `
+    -Headers @{ "x-functions-key" = $functionKey } `
+    -Body '{ "feeds": ["apps", "symbols"] }' `
+    -ContentType "application/json"
+```
+
+Keys are stored in a private blob (`config/accesskeys.json`) that is managed exclusively by these endpoints — do not edit it manually. The registry is loaded into memory at startup and kept in memory for the lifetime of the function app.
+
+When accessing a private feed, clients pass the key as basic auth password, `Authorization: Bearer` header, `X-NuGet-ApiKey` header, or `?token=` query parameter.
 
 ### Using the feeds with BcContainerHelper
 
@@ -39,11 +65,11 @@ $feedUrl = "https://<functionapp>.azurewebsites.net/api/apps/index.json"
 Get-BcNuGetPackage -nuGetServerUrl $feedUrl -packageName "<publisher>.<appname>" -select Exact
 ```
 
-Or register as a trusted feed:
+Or register as a trusted feed (use the access key as token for private feeds):
 
 ```powershell
 $bcContainerHelperConfig.TrustedNuGetFeeds = @(
-    @{ "Url" = "https://<functionapp>.azurewebsites.net/api/apps/index.json"; "Token" = "" }
+    @{ "Url" = "https://<functionapp>.azurewebsites.net/api/apps/index.json"; "Token" = "<access key>" }
 )
 ```
 
@@ -111,6 +137,7 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `BASE_NAME` | Yes | — | Base name for all Azure resources. Lowercase letters and digits only, 3–17 characters, globally unique (used for storage account names). Example: `mybcnuget` |
 | `AZURE_LOCATION` | No | `westeurope` | Azure region to deploy to |
 | `RESOURCE_GROUP_NAME` | No | `<BASE_NAME>-rg` | Name of the resource group (must match the one created in step 2) |
+| `PUBLIC_FEEDS` | No | (empty — all feeds private) | Comma-separated list of feeds served without authentication, e.g. `apps,symbols` |
 
 ### 4. Deploy
 

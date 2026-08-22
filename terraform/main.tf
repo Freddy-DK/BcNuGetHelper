@@ -27,6 +27,13 @@ resource "azurerm_storage_container" "deployments" {
   container_access_type = "private"
 }
 
+# Holds the access key registry (config/accesskeys.json), managed by the function app
+resource "azurerm_storage_container" "config" {
+  name                  = "config"
+  storage_account_id    = azurerm_storage_account.packages.id
+  container_access_type = "private"
+}
+
 resource "azurerm_user_assigned_identity" "func" {
   name                = "${var.base_name}-id"
   resource_group_name = data.azurerm_resource_group.rg.name
@@ -93,6 +100,7 @@ resource "azurerm_function_app_flex_consumption" "func" {
 
   app_settings = {
     PackagesStorageAccountName = azurerm_storage_account.packages.name
+    PublicFeeds                = var.public_feeds
     AZURE_CLIENT_ID            = azurerm_user_assigned_identity.func.client_id
 
     AzureWebJobsStorage__accountName = azurerm_storage_account.packages.name

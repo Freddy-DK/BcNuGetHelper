@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace BcNuGetHelper.Functions;
 
-public class UploadFunction(FeedStorage storage, ILogger<UploadFunction> logger)
+public class UploadFunction(FeedStorage storage, AlTool alTool, ILogger<UploadFunction> logger)
 {
     public record UploadedPackage(string PackageId, string Version, string[] Feeds);
 
@@ -26,19 +26,33 @@ public class UploadFunction(FeedStorage storage, ILogger<UploadFunction> logger)
         foreach (var appFile in appFiles)
         {
             AppManifest manifest;
+            byte[] symbolsFile;
+            var tempDir = Directory.CreateTempSubdirectory("bcnuget");
             try
             {
-                manifest = AppFileParser.Parse(appFile);
+                var appPath = Path.Combine(tempDir.FullName, "app.app");
+                await File.WriteAllBytesAsync(appPath, appFile, ct);
+                manifest = await alTool.GetPackageManifestAsync(appPath, ct);
+
+                var symbolsPath = Path.Combine(tempDir.FullName, "symbols.app");
+                await alTool.CreateSymbolPackageAsync(appPath, symbolsPath, ct);
+                symbolsFile = await File.ReadAllBytesAsync(symbolsPath, ct);
             }
-            catch (InvalidDataException ex)
+            catch (AlToolException ex)
             {
                 return new BadRequestObjectResult(ex.Message);
+            }
+            finally
+            {
+                tempDir.Delete(recursive: true);
             }
 
             var version = VersionHelper.Normalize(manifest.Version);
             foreach (var feed in PackageBuilder.Feeds)
             {
-                var nupkg = PackageBuilder.Build(manifest, appFile, feed);
+                // TODO: transform the .app file to a runtime package during upload; currently the full app
+                var payload = feed == PackageBuilder.FeedSymbols ? symbolsFile : appFile;
+                var nupkg = PackageBuilder.Build(manifest, payload);
                 await storage.SavePackageAsync(feed, manifest.PackageId, version, nupkg, ct);
             }
 

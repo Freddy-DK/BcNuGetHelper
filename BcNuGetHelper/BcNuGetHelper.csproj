@@ -15,6 +15,7 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.0.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.0.2" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.5" />
+    <PackageReference Include="Microsoft.Dynamics.BusinessCentral.Development.Tools" Version="*-*" GeneratePathProperty="true" ExcludeAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <None Update="host.json">
@@ -25,4 +26,17 @@
       <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </None>
   </ItemGroup>
+  <!-- altool is invoked as a bundled dotnet dll (no fallback; it must be deployed with the app) -->
+  <Target Name="CopyAlToolToOutput" AfterTargets="Build">
+    <ItemGroup>
+      <AlToolFiles Include="$(PkgMicrosoft_Dynamics_BusinessCentral_Development_Tools)\tools\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AlToolFiles)" DestinationFiles="@(AlToolFiles->'$(OutDir)altool\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyAlToolToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <AlToolPublishFiles Include="$(PkgMicrosoft_Dynamics_BusinessCentral_Development_Tools)\tools\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AlToolPublishFiles)" DestinationFiles="@(AlToolPublishFiles->'$(PublishDir)altool\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

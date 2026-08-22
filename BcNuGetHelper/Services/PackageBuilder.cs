@@ -15,18 +15,9 @@ public static class PackageBuilder
 
     private static readonly XNamespace NuspecNs = "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd";
 
-    /// <summary>Builds a .nupkg containing the nuspec and the .app payload for the given feed.</summary>
-    public static byte[] Build(AppManifest manifest, byte[] appFile, string feed)
+    /// <summary>Builds a .nupkg containing the nuspec and the .app payload.</summary>
+    public static byte[] Build(AppManifest manifest, byte[] payload)
     {
-        var payload = feed switch
-        {
-            // TODO: transform the .app file to a runtime package during upload
-            FeedRuntime => appFile,
-            // TODO: strip the .app file down to symbols only during upload
-            FeedSymbols => appFile,
-            _ => appFile,
-        };
-
         var appFileName =
             $"{AppManifest.Sanitize(manifest.Publisher)}_{AppManifest.Sanitize(manifest.Name)}_{manifest.Version}.app";
 

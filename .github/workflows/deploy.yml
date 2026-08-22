@@ -74,6 +74,7 @@ jobs:
           TF_VAR_base_name: ${{ env.BASE_NAME }}
           TF_VAR_location: ${{ env.AZURE_LOCATION }}
           TF_VAR_resource_group_name: ${{ env.RESOURCE_GROUP_NAME }}
+          TF_VAR_public_feeds: ${{ vars.PUBLIC_FEEDS }}
         run: terraform apply -auto-approve -input=false
 
   function:
