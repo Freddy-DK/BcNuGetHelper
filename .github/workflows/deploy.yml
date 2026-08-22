@@ -1,0 +1,85 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: deploy
+
+env:
+  BASE_NAME: ${{ vars.BASE_NAME }}
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
+  RESOURCE_GROUP_NAME: ${{ vars.RESOURCE_GROUP_NAME || format('{0}-rg', vars.BASE_NAME) }}
+  # Terraform azurerm provider + backend authentication (OIDC)
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: "true"
+  ARM_USE_AZUREAD: "true"
+
+jobs:
+  infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap resource group and Terraform state storage
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az group create --name "$RESOURCE_GROUP_NAME" --location "$AZURE_LOCATION" --output none
+            az storage account create \
+              --name "${BASE_NAME}state" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --location "$AZURE_LOCATION" \
+              --sku Standard_LRS \
+              --kind StorageV2 \
+              --min-tls-version TLS1_2 \
+              --allow-blob-public-access false \
+              --output none
+            az storage container create \
+              --name tfstate \
+              --account-name "${BASE_NAME}state" \
+              --auth-mode login \
+              --output none
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=$RESOURCE_GROUP_NAME" \
+            -backend-config="storage_account_name=${BASE_NAME}state" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=bcnugethelper.tfstate"
+
+      - name: Terraform apply
+        working-directory: terraform
+        env:
+          TF_VAR_base_name: ${{ env.BASE_NAME }}
+          TF_VAR_location: ${{ env.AZURE_LOCATION }}
+          TF_VAR_resource_group_name: ${{ env.RESOURCE_GROUP_NAME }}
+        run: terraform apply -auto-approve -input=false
+
+  function:
+    needs: infrastructure
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/deploy-function.yml
+    secrets: inherit
