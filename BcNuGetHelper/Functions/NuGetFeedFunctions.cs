@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using BcNuGetHelper.Models;
 using BcNuGetHelper.Services;
@@ -129,10 +130,39 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             return new NotFoundResult();
         }
+
+        // The flat container protocol also serves the nuspec at {id}/{version}/{id}.nuspec
+        if (fileName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase))
+        {
+            await using (stream)
+            {
+                var nuspec = await ExtractNuspecAsync(stream, ct);
+                return nuspec is null ? new NotFoundResult() : new FileContentResult(nuspec, "application/xml");
+            }
+        }
+
         return new FileStreamResult(stream, "application/octet-stream")
         {
             FileDownloadName = $"{id.ToLowerInvariant()}.{version.ToLowerInvariant()}.nupkg",
         };
+    }
+
+    private static async Task<byte[]?> ExtractNuspecAsync(Stream nupkg, CancellationToken ct)
+    {
+        using var buffer = new MemoryStream();
+        await nupkg.CopyToAsync(buffer, ct);
+        buffer.Position = 0;
+        using var archive = new ZipArchive(buffer, ZipArchiveMode.Read);
+        var entry = archive.Entries.FirstOrDefault(
+            e => e.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase));
+        if (entry is null)
+        {
+            return null;
+        }
+        using var entryStream = entry.Open();
+        using var output = new MemoryStream();
+        await entryStream.CopyToAsync(output, ct);
+        return output.ToArray();
     }
 
     private static readonly HashSet<string> PublicFeeds = new(
