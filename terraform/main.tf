@@ -40,10 +40,12 @@ resource "azurerm_user_assigned_identity" "func" {
   location            = var.location
 }
 
-# Gives the function app access to packages and deployment artifacts
+# Gives the function app access to packages and deployment artifacts.
+# Data Owner (not Contributor) is required by the Functions host for
+# identity-based AzureWebJobsStorage (host keys/secrets management).
 resource "azurerm_role_assignment" "func_storage" {
   scope                = azurerm_storage_account.packages.id
-  role_definition_name = "Storage Blob Data Contributor"
+  role_definition_name = "Storage Blob Data Owner"
   principal_id         = azurerm_user_assigned_identity.func.principal_id
 }
 

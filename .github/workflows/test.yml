@@ -44,3 +44,12 @@ jobs:
             -BaseUrl "https://$($env:BASE_NAME)-func.azurewebsites.net" `
             -FunctionKey $env:FUNCTION_KEY `
             -GitHubToken $env:GH_TOKEN
+
+      - name: Run BcContainerHelper tests
+        shell: pwsh
+        env:
+          FUNCTION_KEY: ${{ steps.key.outputs.function_key }}
+        run: |
+          ./tests/Test-BcContainerHelper.ps1 `
+            -BaseUrl "https://$($env:BASE_NAME)-func.azurewebsites.net" `
+            -FunctionKey $env:FUNCTION_KEY
