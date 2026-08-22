@@ -10,6 +10,10 @@ permissions:
 
 concurrency: deploy-function
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

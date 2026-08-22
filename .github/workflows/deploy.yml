@@ -9,6 +9,10 @@ permissions:
 
 concurrency: deploy
 
+defaults:
+  run:
+    shell: pwsh
+
 env:
   BASE_NAME: ${{ vars.BASE_NAME }}
   AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
@@ -62,10 +66,10 @@ jobs:
       - name: Terraform init
         working-directory: terraform
         run: |
-          terraform init \
-            -backend-config="resource_group_name=$RESOURCE_GROUP_NAME" \
-            -backend-config="storage_account_name=${BASE_NAME}state" \
-            -backend-config="container_name=tfstate" \
+          terraform init `
+            -backend-config="resource_group_name=$env:RESOURCE_GROUP_NAME" `
+            -backend-config="storage_account_name=$($env:BASE_NAME)state" `
+            -backend-config="container_name=tfstate" `
             -backend-config="key=bcnugethelper.tfstate"
 
       - name: Terraform apply

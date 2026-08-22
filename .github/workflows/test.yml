@@ -9,6 +9,10 @@ permissions:
 
 concurrency: test
 
+defaults:
+  run:
+    shell: pwsh
+
 env:
   BASE_NAME: ${{ vars.BASE_NAME }}
   RESOURCE_GROUP_NAME: ${{ vars.RESOURCE_GROUP_NAME || format('{0}-rg', vars.BASE_NAME) }}
@@ -32,15 +36,14 @@ jobs:
         run: |
           # az functionapp keys list returns "Bad Request" on Flex Consumption apps,
           # so call the ARM listKeys endpoint directly.
-          app_id=$(az functionapp show --name "${BASE_NAME}-func" --resource-group "$RESOURCE_GROUP_NAME" --query id -o tsv)
-          key=$(az rest --method post \
-            --uri "https://management.azure.com${app_id}/host/default/listKeys?api-version=2023-12-01" \
-            --query "functionKeys.default" -o tsv)
-          echo "::add-mask::$key"
-          echo "function_key=$key" >> "$GITHUB_OUTPUT"
+          $appId = az functionapp show --name "$env:BASE_NAME-func" --resource-group $env:RESOURCE_GROUP_NAME --query id -o tsv
+          $key = az rest --method post `
+            --uri "https://management.azure.com$appId/host/default/listKeys?api-version=2023-12-01" `
+            --query "functionKeys.default" -o tsv
+          Write-Host "::add-mask::$key"
+          "function_key=$key" >> $env:GITHUB_OUTPUT
 
       - name: Run NuGet feed tests
-        shell: pwsh
         env:
           FUNCTION_KEY: ${{ steps.key.outputs.function_key }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -51,7 +54,6 @@ jobs:
             -GitHubToken $env:GH_TOKEN
 
       - name: Run BcContainerHelper tests
-        shell: pwsh
         env:
           FUNCTION_KEY: ${{ steps.key.outputs.function_key }}
         run: |
