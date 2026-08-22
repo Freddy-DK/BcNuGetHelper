@@ -96,37 +96,76 @@ Deployment runs entirely from your fork using GitHub Actions and Terraform. Terr
 The deploy workflow authenticates with a **user-assigned managed identity** using GitHub OIDC federation — no app registration and no stored credentials. All roles are scoped to the deployment resource group only, so the identity (and the resource group) must be created up front:
 
 ```powershell
-$github = "<your-github-user>"
-$rg     = "<RESOURCE_GROUP_NAME>"          # e.g. mybcnuget-rg
-$sub    = az account show --query id -o tsv
+$repo         = "<owner/repo>"                     # Owner and repo of BcNuGetHelper fork
+$location     = "<azure location>"                 # e.g. westeurope
+$baseName     = "<base name>"                      # e.g. nghfreddydk (3-17 lowercase letters/digits, globally unique)
+$rg           = "$($basename)-rg"                  # e.g. nghfreddydk-rg
+$subscription = az account show --query id -o tsv  # subscription ID
 
-az group create --name $rg --location westeurope
-az identity create --name github-deploy --resource-group $rg
+# GitHub now embeds account and repository IDs in the OIDC subject claim
+$repoInfo  = Invoke-RestMethod "https://api.github.com/repos/$repo"
+$idSubject = "repo:$($repoInfo.owner.login)@$($repoInfo.owner.id)/$($repoInfo.name)@$($repoInfo.id):ref:refs/heads/main"
+
+# Verify the base name is available before creating anything
+foreach ($name in @($baseName, "$($baseName)state")) {
+    if ((az storage account check-name --name $name --query nameAvailable -o tsv) -ne "true") {
+        throw "Storage account name '$name' is not available - choose another base name"
+    }
+}
+$body = '{"name": "' + $baseName + '-func", "type": "Microsoft.Web/sites"}'
+if ((az rest --method post --url "https://management.azure.com/subscriptions/$subscription/providers/Microsoft.Web/checknameavailability?api-version=2023-12-01" --body $body --query nameAvailable -o tsv) -ne "true") {
+    throw "Function app name '$($baseName)-func' is not available - choose another base name"
+}
+
+az group create --name $rg --location $location | Out-Null
+$identity = az identity create --name github-deploy --resource-group $rg
 az identity federated-credential create `
     --identity-name github-deploy `
     --resource-group $rg `
     --name github-main `
     --issuer "https://token.actions.githubusercontent.com" `
-    --subject "repo:$github/BcNuGetHelper:ref:refs/heads/main" `
-    --audiences "api://AzureADTokenExchange"
+    --subject "repo:$($repo):ref:refs/heads/main" `
+    --audiences "api://AzureADTokenExchange" | Out-Null
+az identity federated-credential create `
+    --identity-name github-deploy `
+    --resource-group $rg `
+    --name github-main-ids `
+    --issuer "https://token.actions.githubusercontent.com" `
+    --subject $idSubject `
+    --audiences "api://AzureADTokenExchange" | Out-Null
 
 $principalId = az identity show --name github-deploy --resource-group $rg --query principalId -o tsv
-az role assignment create --assignee $principalId --role "Contributor" --scope "/subscriptions/$sub/resourceGroups/$rg"
-az role assignment create --assignee $principalId --role "Role Based Access Control Administrator" --scope "/subscriptions/$sub/resourceGroups/$rg"
-az role assignment create --assignee $principalId --role "Storage Blob Data Contributor" --scope "/subscriptions/$sub/resourceGroups/$rg"
+az role assignment create --assignee $principalId --role "Contributor" --scope "/subscriptions/$subscription/resourceGroups/$rg" | Out-Null
+az role assignment create --assignee $principalId --role "Role Based Access Control Administrator" --scope "/subscriptions/$subscription/resourceGroups/$rg" | Out-Null
+az role assignment create --assignee $principalId --role "Storage Blob Data Contributor" --scope "/subscriptions/$subscription/resourceGroups/$rg" | Out-Null
+
+# Configure the repository secrets and variables (requires gh auth login)
+$clientId = az identity show --name github-deploy --resource-group $rg --query clientId -o tsv
+$tenantId = az account show --query tenantId -o tsv
+gh secret set AZURE_CLIENT_ID --repo $repo --body $clientId
+gh secret set AZURE_TENANT_ID --repo $repo --body $tenantId
+gh secret set AZURE_SUBSCRIPTION_ID --repo $repo --body $subscription
+
+gh variable set BASE_NAME --repo $repo --body $baseName
+gh variable set AZURE_LOCATION --repo $repo --body $location
+gh variable set RESOURCE_GROUP_NAME --repo $repo --body $rg
+# Optional: feeds served without authentication
+# gh variable set PUBLIC_FEEDS --repo $repo --body "apps,runtime,symbols"
 ```
 
 Roles: **Contributor** (create resources), **Role Based Access Control Administrator** (create the role assignment for the function's managed identity) and **Storage Blob Data Contributor** (read/write Terraform state).
 
+> Two federated credentials are created because GitHub is rolling out a new OIDC subject claim format that embeds account and repository IDs (`repo:owner@id/repo@id:...`). Registering both the classic and the ID-based subject makes login work either way. If login still fails with `AADSTS700213`, copy the exact "subject claim" shown in the failed *Azure login* step into a federated credential.
+
 ### 3. Configure repository settings
 
-All settings are configured as repository **secrets** and **variables** (Settings → Secrets and variables → Actions).
+All settings are configured as repository **secrets** and **variables** (Settings → Secrets and variables → Actions). The script in step 2 sets them all via the [GitHub CLI](https://cli.github.com/); the tables below describe them for reference.
 
 #### Secrets
 
 | Secret | Required | Description |
 |--------|----------|-------------|
-| `AZURE_CLIENT_ID` | Yes | Client id of the managed identity created above (`az identity show --name github-deploy --resource-group <rg> --query clientId -o tsv`) |
+| `AZURE_CLIENT_ID` | Yes | Client id of the managed identity created above (`az identity show --name github-deploy --resource-group $rg --query clientId -o tsv`) |
 | `AZURE_TENANT_ID` | Yes | Your Entra ID tenant id |
 | `AZURE_SUBSCRIPTION_ID` | Yes | The Azure subscription to deploy to |
 
@@ -135,13 +174,13 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `BASE_NAME` | Yes | — | Base name for all Azure resources. Lowercase letters and digits only, 3–17 characters, globally unique (used for storage account names). Example: `mybcnuget` |
-| `AZURE_LOCATION` | No | `westeurope` | Azure region to deploy to |
+| `AZURE_LOCATION` | Yes | `westeurope` | Azure region to deploy to |
 | `RESOURCE_GROUP_NAME` | No | `<BASE_NAME>-rg` | Name of the resource group (must match the one created in step 2) |
-| `PUBLIC_FEEDS` | No | (empty — all feeds private) | Comma-separated list of feeds served without authentication, e.g. `apps,symbols` |
+| `PUBLIC_FEEDS` | No | (empty — all feeds private) | Comma-separated list of feeds served without authentication, e.g. `apps,runtime,symbols` |
 
 ### 4. Deploy
 
-Push to `main` or run the **Deploy** workflow manually (Actions → Deploy → Run workflow). The workflow:
+Run the **Deploy** workflow manually (Actions → Deploy → Run workflow). The workflow:
 
 1. Logs in to Azure using OIDC (no stored credentials)
 2. Bootstraps the resource group and Terraform state storage (`<BASE_NAME>state`)
@@ -176,6 +215,8 @@ Without a `PackagesStorageAccountName` setting the app falls back to the local A
 ```
 .github/workflows/deploy.yml            Full deployment (Terraform + function app)
 .github/workflows/deploy-function.yml   Function app only (manual trigger)
+.github/workflows/test.yml              End-to-end tests against the deployed service
 terraform/                              Terraform configuration
 BcNuGetHelper/                          Azure Function app (.NET 10 isolated)
+tests/                                  Test scripts
 ```
