@@ -30,7 +30,12 @@ jobs:
       - name: Get function key
         id: key
         run: |
-          key=$(az functionapp keys list --name "${BASE_NAME}-func" --resource-group "$RESOURCE_GROUP_NAME" --query "functionKeys.default" -o tsv)
+          # az functionapp keys list returns "Bad Request" on Flex Consumption apps,
+          # so call the ARM listKeys endpoint directly.
+          app_id=$(az functionapp show --name "${BASE_NAME}-func" --resource-group "$RESOURCE_GROUP_NAME" --query id -o tsv)
+          key=$(az rest --method post \
+            --uri "https://management.azure.com${app_id}/host/default/listKeys?api-version=2023-12-01" \
+            --query "functionKeys.default" -o tsv)
           echo "::add-mask::$key"
           echo "function_key=$key" >> "$GITHUB_OUTPUT"
 
