@@ -7,15 +7,20 @@ using Microsoft.Extensions.Logging;
 
 namespace BcNuGetHelper.Functions;
 
-public class UploadFunction(FeedStorage storage, AlTool alTool, ILogger<UploadFunction> logger)
+public class UploadFunction(FeedStorage storage, AlTool alTool, AdminAuthenticator admin, ILogger<UploadFunction> logger)
 {
     public record UploadedPackage(string PackageId, string Version, string[] Feeds);
 
     [Function("Upload")]
     public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "upload")] HttpRequest req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "upload")] HttpRequest req,
         CancellationToken ct)
     {
+        if (!await admin.IsAuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
         var appFiles = await ReadAppFilesAsync(req, ct);
         if (appFiles.Count == 0)
         {

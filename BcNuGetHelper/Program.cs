@@ -35,5 +35,6 @@ builder.Services.AddHostedService<FeedStorageLoader>();
 builder.Services.AddSingleton<AccessKeyStore>();
 builder.Services.AddHostedService<AccessKeyStoreLoader>();
 builder.Services.AddSingleton<AlTool>();
+builder.Services.AddSingleton<AdminAuthenticator>();
 
 builder.Build().Run();

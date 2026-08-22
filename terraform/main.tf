@@ -4,6 +4,8 @@ data "azurerm_resource_group" "rg" {
   name = var.resource_group_name
 }
 
+data "azurerm_client_config" "current" {}
+
 resource "azurerm_storage_account" "packages" {
   name                            = var.base_name
   resource_group_name             = data.azurerm_resource_group.rg.name
@@ -108,6 +110,12 @@ resource "azurerm_function_app_flex_consumption" "func" {
     AzureWebJobsStorage__accountName = azurerm_storage_account.packages.name
     AzureWebJobsStorage__credential  = "managedidentity"
     AzureWebJobsStorage__clientId    = azurerm_user_assigned_identity.func.client_id
+
+    # Microsoft Entra authorization for the admin endpoints (upload, access keys),
+    # in place of Azure Functions host keys. Callers present an Entra bearer token.
+    AdminAuth__TenantId         = data.azurerm_client_config.current.tenant_id
+    AdminAuth__AllowedAudiences = "https://management.core.windows.net/,https://management.azure.com/,https://management.azure.com"
+    AdminAuth__AllowedClientIds = var.admin_client_id
   }
 
   depends_on = [azurerm_role_assignment.func_storage]

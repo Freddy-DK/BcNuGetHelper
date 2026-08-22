@@ -6,7 +6,7 @@ Expects packages to be present in the feeds (run Test-NuGetFeeds.ps1 first).
 #>
 param(
     [Parameter(Mandatory)] [string] $BaseUrl,
-    [Parameter(Mandatory)] [string] $FunctionKey
+    [Parameter(Mandatory)] [string] $AccessToken
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +19,7 @@ function Assert {
     Write-Host "  OK: $Message"
 }
 
-$functionHeaders = @{ "x-functions-key" = $FunctionKey }
+$adminHeaders = @{ Authorization = "Bearer $AccessToken" }
 
 Write-Host "Installing BcContainerHelper"
 Install-Module BcContainerHelper -Force -Scope CurrentUser
@@ -28,9 +28,9 @@ Assert ($null -ne (Get-Command Get-BcNuGetPackage -ErrorAction SilentlyContinue)
 
 # --- Access key for the private feeds ---
 $keyName = "e2e-bch"
-Invoke-WebRequest -Method Delete -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $functionHeaders -SkipHttpErrorCheck | Out-Null
+Invoke-WebRequest -Method Delete -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $adminHeaders -SkipHttpErrorCheck | Out-Null
 $created = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/accesskeys/$keyName" `
-    -Headers $functionHeaders -Body '{ "feeds": ["apps", "runtime", "symbols"] }' -ContentType "application/json"
+    -Headers $adminHeaders -Body '{ "feeds": ["apps", "runtime", "symbols"] }' -ContentType "application/json"
 $token = $created.key
 
 foreach ($feed in @("apps", "runtime", "symbols")) {
@@ -58,7 +58,7 @@ foreach ($feed in @("apps", "runtime", "symbols")) {
     Assert ($appFiles.Count -gt 0) "Download-BcNuGetPackageToFolder extracts .app file(s) for $id"
 }
 
-Invoke-WebRequest -Method Delete -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $functionHeaders -SkipHttpErrorCheck | Out-Null
+Invoke-WebRequest -Method Delete -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $adminHeaders -SkipHttpErrorCheck | Out-Null
 
 Write-Host ""
 Write-Host "All BcContainerHelper tests passed ($script:assertions assertions)"

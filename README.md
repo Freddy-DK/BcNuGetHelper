@@ -28,7 +28,7 @@ Each feed implements the NuGet v3 resources needed by [BcContainerHelper](https:
 
 There is no NuGet push/publish support. All uploads go through the upload endpoint:
 
-- **Upload** — `POST api/upload` (requires a [function key](https://learn.microsoft.com/azure/azure-functions/function-keys-how-to) via `x-functions-key` header or `?code=` query parameter). Accepts a raw `.app` file body or `multipart/form-data` with one or more `.app` files (Business Central apps and their dependencies).
+- **Upload** — `POST api/upload` (requires a Microsoft Entra bearer token via the `Authorization: Bearer` header). Accepts a raw `.app` file body or `multipart/form-data` with one or more `.app` files (Business Central apps and their dependencies).
 
 Uploaded apps are processed with the [AL development tools](https://learn.microsoft.com/dynamics365/business-central/dev-itpro/developer/devenv-al-tool-package) (`altool`, bundled with the deployment): the manifest (id, name, publisher, version, dependencies) is extracted, a symbols-only package is created for the symbols feed, and everything is wrapped as NuGet packages with dependency information and stored under `{feed}/{packageId}/{version}/` in the `packages` blob container.
 
@@ -36,7 +36,7 @@ Uploaded apps are processed with the [AL development tools](https://learn.micros
 
 Each feed is either **public** (anonymous read access) or **private** (requires an access key). Which feeds are public is controlled by the `PUBLIC_FEEDS` repository variable; all feeds are private by default.
 
-Access keys are managed through function-key protected endpoints:
+Access keys are managed through Entra-protected endpoints:
 
 | Endpoint | Description |
 |----------|-------------|
@@ -45,11 +45,11 @@ Access keys are managed through function-key protected endpoints:
 | `DELETE api/accesskeys/{name}` | Remove an access key |
 
 ```powershell
-$functionKey = "<your function key>"
+$token = az account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv
 Invoke-RestMethod `
     -Method Post `
     -Uri "https://<functionapp>.azurewebsites.net/api/accesskeys/partner1" `
-    -Headers @{ "x-functions-key" = $functionKey } `
+    -Headers @{ Authorization = "Bearer $token" } `
     -Body '{ "feeds": ["apps", "symbols"] }' `
     -ContentType "application/json"
 ```
@@ -76,11 +76,11 @@ $bcContainerHelperConfig.TrustedNuGetFeeds = @(
 ### Uploading apps
 
 ```powershell
-$functionKey = "<your function key>"
+$token = az account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv
 Invoke-RestMethod `
     -Method Post `
     -Uri "https://<functionapp>.azurewebsites.net/api/upload" `
-    -Headers @{ "x-functions-key" = $functionKey } `
+    -Headers @{ Authorization = "Bearer $token" } `
     -InFile ".\MyApp_1.0.0.0.app" `
     -ContentType "application/octet-stream"
 ```
@@ -151,6 +151,8 @@ gh variable set AZURE_LOCATION --repo $repo --body $location
 gh variable set RESOURCE_GROUP_NAME --repo $repo --body $rg
 # Optional: feeds served without authentication
 # gh variable set PUBLIC_FEEDS --repo $repo --body "apps,runtime,symbols"
+# Optional: restrict admin endpoints (upload, access keys) to a single client/application id
+# gh variable set ADMIN_CLIENT_ID --repo $repo --body "<client-id>"
 ```
 
 Roles: **Contributor** (create resources), **Role Based Access Control Administrator** (create the role assignment for the function's managed identity) and **Storage Blob Data Contributor** (read/write Terraform state).
@@ -177,6 +179,7 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `AZURE_LOCATION` | Yes | `westeurope` | Azure region to deploy to |
 | `RESOURCE_GROUP_NAME` | No | `<BASE_NAME>-rg` | Name of the resource group (must match the one created in step 2) |
 | `PUBLIC_FEEDS` | No | (empty — all feeds private) | Comma-separated list of feeds served without authentication, e.g. `apps,runtime,symbols` |
+| `ADMIN_CLIENT_ID` | No | (empty — any caller from your tenant) | Restrict the admin endpoints (upload, access keys) to a single client/application id. When empty, any valid Entra token from your tenant (for the ARM audience) is accepted |
 
 ### 4. Deploy
 

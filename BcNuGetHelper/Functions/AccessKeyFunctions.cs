@@ -6,7 +6,7 @@ using Microsoft.Azure.Functions.Worker;
 
 namespace BcNuGetHelper.Functions;
 
-public class AccessKeyFunctions(AccessKeyStore store)
+public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -14,20 +14,30 @@ public class AccessKeyFunctions(AccessKeyStore store)
 
     [Function("GetAccessKey")]
     public async Task<IActionResult> Get(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "accesskeys/{name}")] HttpRequest req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "accesskeys/{name}")] HttpRequest req,
         string name,
         CancellationToken ct)
     {
+        if (!await admin.IsAuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
         var key = await store.GetAsync(name, ct);
         return key is null ? new NotFoundResult() : new OkObjectResult(key);
     }
 
     [Function("CreateAccessKey")]
     public async Task<IActionResult> Create(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "accesskeys/{name}")] HttpRequest req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "accesskeys/{name}")] HttpRequest req,
         string name,
         CancellationToken ct)
     {
+        if (!await admin.IsAuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
         CreateAccessKeyRequest? request;
         try
         {
@@ -54,10 +64,15 @@ public class AccessKeyFunctions(AccessKeyStore store)
 
     [Function("DeleteAccessKey")]
     public async Task<IActionResult> Delete(
-        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "accesskeys/{name}")] HttpRequest req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "accesskeys/{name}")] HttpRequest req,
         string name,
         CancellationToken ct)
     {
+        if (!await admin.IsAuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
         return await store.RemoveAsync(name, ct) ? new NoContentResult() : new NotFoundResult();
     }
 }

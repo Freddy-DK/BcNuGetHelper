@@ -24,3 +24,9 @@ variable "public_feeds" {
   type        = string
   default     = ""
 }
+
+variable "admin_client_id" {
+  description = "Client (application) ID allowed to call the admin endpoints (upload, access keys) with an Entra bearer token. Typically the GitHub OIDC service principal. Empty allows any caller from the tenant with a valid token for the allowed audiences."
+  type        = string
+  default     = ""
+}

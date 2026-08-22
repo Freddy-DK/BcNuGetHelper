@@ -31,32 +31,28 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Get function key
-        id: key
+      - name: Get admin token
+        id: token
         run: |
-          # az functionapp keys list returns "Bad Request" on Flex Consumption apps,
-          # so call the ARM listKeys endpoint directly.
-          $appId = az functionapp show --name "$env:BASE_NAME-func" --resource-group $env:RESOURCE_GROUP_NAME --query id -o tsv
-          $key = az rest --method post `
-            --uri "https://management.azure.com$appId/host/default/listKeys?api-version=2023-12-01" `
-            --query "functionKeys.default" -o tsv
-          Write-Host "::add-mask::$key"
-          "function_key=$key" >> $env:GITHUB_OUTPUT
+          # Entra bearer token for the admin endpoints (upload, access keys); replaces Functions host keys.
+          $token = az account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv
+          Write-Host "::add-mask::$token"
+          "access_token=$token" >> $env:GITHUB_OUTPUT
 
       - name: Run NuGet feed tests
         env:
-          FUNCTION_KEY: ${{ steps.key.outputs.function_key }}
+          ADMIN_TOKEN: ${{ steps.token.outputs.access_token }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./tests/Test-NuGetFeeds.ps1 `
             -BaseUrl "https://$($env:BASE_NAME)-func.azurewebsites.net" `
-            -FunctionKey $env:FUNCTION_KEY `
+            -AccessToken $env:ADMIN_TOKEN `
             -GitHubToken $env:GH_TOKEN
 
       - name: Run BcContainerHelper tests
         env:
-          FUNCTION_KEY: ${{ steps.key.outputs.function_key }}
+          ADMIN_TOKEN: ${{ steps.token.outputs.access_token }}
         run: |
           ./tests/Test-BcContainerHelper.ps1 `
             -BaseUrl "https://$($env:BASE_NAME)-func.azurewebsites.net" `
-            -FunctionKey $env:FUNCTION_KEY
+            -AccessToken $env:ADMIN_TOKEN

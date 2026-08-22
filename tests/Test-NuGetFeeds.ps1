@@ -8,7 +8,7 @@ Uploaded packages are intentionally left in the storage account.
 #>
 param(
     [Parameter(Mandatory)] [string] $BaseUrl,
-    [Parameter(Mandatory)] [string] $FunctionKey,
+    [Parameter(Mandatory)] [string] $AccessToken,
     [string] $AppsRepo = "Freddy-DK/MultiProjectRepo",
     [string] $GitHubToken
 )
@@ -24,7 +24,7 @@ function Assert {
     Write-Host "  OK: $Message"
 }
 
-$functionHeaders = @{ "x-functions-key" = $FunctionKey }
+$adminHeaders = @{ Authorization = "Bearer $AccessToken" }
 
 # --- Get .app files from the last two releases ---
 Write-Host "Downloading apps from the last two releases of $AppsRepo"
@@ -61,7 +61,7 @@ $uploaded = @()
 foreach ($app in $appFiles) {
     Write-Host "Uploading $($app.Name)"
     $response = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/upload" `
-        -Headers $functionHeaders -InFile $app.FullName -ContentType "application/octet-stream"
+        -Headers $adminHeaders -InFile $app.FullName -ContentType "application/octet-stream"
     $uploaded += $response.packages
 }
 $uploaded = @($uploaded | Sort-Object packageId, version -Unique)
@@ -71,11 +71,11 @@ $uploaded | ForEach-Object { Write-Host "  $($_.packageId) $($_.version)" }
 # --- Access key management ---
 $keyName = "e2e-test"
 Write-Host "Testing access key endpoints"
-Invoke-WebRequest -Method Delete -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $functionHeaders -SkipHttpErrorCheck | Out-Null
+Invoke-WebRequest -Method Delete -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $adminHeaders -SkipHttpErrorCheck | Out-Null
 $created = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/accesskeys/$keyName" `
-    -Headers $functionHeaders -Body '{ "feeds": ["apps", "runtime", "symbols"] }' -ContentType "application/json"
+    -Headers $adminHeaders -Body '{ "feeds": ["apps", "runtime", "symbols"] }' -ContentType "application/json"
 Assert ($created.key.Length -eq 64) "created access key '$keyName'"
-$fetched = Invoke-RestMethod -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $functionHeaders
+$fetched = Invoke-RestMethod -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $adminHeaders
 Assert ($fetched.key -eq $created.key) "fetched access key matches created key"
 $feedHeaders = @{ Authorization = "Bearer $($created.key)" }
 
@@ -125,7 +125,7 @@ foreach ($feed in @("apps", "runtime", "symbols")) {
 }
 
 # Uploaded packages are left in the storage account on purpose; only the test key is removed
-Invoke-WebRequest -Method Delete -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $functionHeaders -SkipHttpErrorCheck | Out-Null
+Invoke-WebRequest -Method Delete -Uri "$BaseUrl/api/accesskeys/$keyName" -Headers $adminHeaders -SkipHttpErrorCheck | Out-Null
 
 Write-Host ""
 Write-Host "All tests passed ($script:assertions assertions)"
