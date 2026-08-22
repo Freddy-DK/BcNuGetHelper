@@ -29,10 +29,15 @@ $adminHeaders = @{ Authorization = "Bearer $AccessToken" }
 # --- Get .app files from the last two releases ---
 Write-Host "Downloading apps from the last two releases of $AppsRepo"
 $githubHeaders = @{ "X-GitHub-Api-Version" = "2022-11-28" }
-if ($GitHubToken) { $githubHeaders.Authorization = "Bearer $GitHubToken" }
-$releases = @(Invoke-RestMethod "https://api.github.com/repos/$AppsRepo/releases" -Headers $githubHeaders |
-    Where-Object { -not $_.draft } |
-    Select-Object -First 2)
+if ($GitHubToken) { $githubHeaders.Authorization = "Bearer $GitHubToken"; Write-Host "  using GitHub token (length $($GitHubToken.Length))" }
+else { Write-Host "  WARNING: no GitHub token supplied; calling the API anonymously" }
+$releasesResponse = Invoke-WebRequest "https://api.github.com/repos/$AppsRepo/releases" -Headers $githubHeaders -SkipHttpErrorCheck
+Write-Host "  GET /releases -> HTTP $($releasesResponse.StatusCode); rate-limit-remaining=$($releasesResponse.Headers['X-RateLimit-Remaining'])"
+Assert ($releasesResponse.StatusCode -eq 200) "GitHub releases API returned 200 (got $($releasesResponse.StatusCode)): $($releasesResponse.Content)"
+$allReleases = @($releasesResponse.Content | ConvertFrom-Json)
+Write-Host "  releases returned (incl. drafts/prereleases): $($allReleases.Count)"
+$allReleases | ForEach-Object { Write-Host "    - $($_.tag_name) draft=$($_.draft) prerelease=$($_.prerelease) assets=$($_.assets.Count)" }
+$releases = @($allReleases | Where-Object { -not $_.draft } | Select-Object -First 2)
 Assert ($releases.Count -ge 1) "found releases in $AppsRepo (got $($releases.Count))"
 
 $workDir = Join-Path ([System.IO.Path]::GetTempPath()) "bcnuget-tests-$([guid]::NewGuid())"
@@ -59,10 +64,12 @@ Assert ($appFiles.Count -gt 0) "found .app files in release assets (got $($appFi
 # --- Upload ---
 $uploaded = @()
 foreach ($app in $appFiles) {
-    Write-Host "Uploading $($app.Name)"
-    $response = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/upload" `
-        -Headers $adminHeaders -InFile $app.FullName -ContentType "application/octet-stream"
-    $uploaded += $response.packages
+    Write-Host "Uploading $($app.Name) ($([math]::Round($app.Length / 1KB, 1)) KB)"
+    $response = Invoke-WebRequest -Method Post -Uri "$BaseUrl/api/upload" `
+        -Headers $adminHeaders -InFile $app.FullName -ContentType "application/octet-stream" -SkipHttpErrorCheck
+    Write-Host "  POST /api/upload -> HTTP $($response.StatusCode)"
+    Assert ($response.StatusCode -eq 200) "upload of $($app.Name) succeeded (got $($response.StatusCode): $($response.Content))"
+    $uploaded += ($response.Content | ConvertFrom-Json).packages
 }
 $uploaded = @($uploaded | Sort-Object packageId, version -Unique)
 Assert ($uploaded.Count -gt 0) "uploaded packages (got $($uploaded.Count))"
