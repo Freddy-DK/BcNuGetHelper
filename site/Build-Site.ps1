@@ -26,7 +26,7 @@ $ErrorActionPreference = "Stop"
 $BaseUrl = $BaseUrl.TrimEnd("/")
 $assetsDir = Join-Path $PSScriptRoot "assets"
 
-$allFeeds = @("apps", "runtime", "symbols")
+$allFeeds = @("apps", "symbols", "runtime")
 $feedLabels = @{ apps = "Full app"; runtime = "Runtime"; symbols = "Symbols" }
 $publicFeedList = @(
     $PublicFeeds.Split([char]',', ([StringSplitOptions]::RemoveEmptyEntries -bor [StringSplitOptions]::TrimEntries)) |
@@ -143,6 +143,14 @@ table.versions th, table.versions td { text-align: left; padding: .6rem .5rem; b
 table.versions th { font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; color: #64748b; }
 .btn { display: inline-block; padding: .3rem .7rem; margin: .15rem .25rem .15rem 0; font-size: .82rem; border-radius: 6px; background: var(--brand-accent); color: #fff; }
 .btn:hover { text-decoration: none; filter: brightness(.95); }
+.btn-alt { background: #64748b; }
+.dl-group { display: inline-flex; align-items: center; gap: .2rem; margin: .15rem .8rem .15rem 0; }
+.dl-label { font-size: .78rem; color: #64748b; margin-right: .2rem; }
+.feeds { margin: 1.5rem 0; }
+.feeds h2 { font-size: 1rem; margin-bottom: .4rem; }
+.feeds ul { list-style: none; padding: 0; margin: 0; }
+.feeds li { padding: .2rem 0; }
+.feeds code { background: #eef2f7; padding: .15rem .4rem; border-radius: 4px; font-size: .85rem; }
 .empty { text-align: center; color: #64748b; padding: 3rem 1rem; }
 .back { display: inline-block; margin-bottom: 1rem; font-size: .9rem; }
 "@
@@ -230,15 +238,26 @@ foreach ($app in $apps) {
     $versionsDesc = @($app.versions)
     [array]::Reverse($versionsDesc)
     $rows = foreach ($v in $versionsDesc) {
-        $buttons = foreach ($feed in $allFeeds) {
+        $ver = $v.version
+        $groups = foreach ($feed in $allFeeds) {
             if ($publicFeedList -contains $feed) {
-                "<a class=`"btn`" href=`"$BaseUrl/api/$feed/download/$(Encode $id)/$(Encode $v.version)`">$(Encode $feedLabels[$feed])</a>"
+                $appUrl = "$BaseUrl/api/$feed/download/$(Encode $id)/$(Encode $ver)"
+                $nupkgUrl = "$BaseUrl/api/$feed/package/$(Encode $id)/$(Encode $ver)/$(Encode $id).$(Encode $ver).nupkg"
+                "<span class=`"dl-group`"><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span><a class=`"btn`" href=`"$appUrl`">.app</a><a class=`"btn btn-alt`" href=`"$nupkgUrl`">.nupkg</a></span>"
             }
         }
-        "<tr><td>$(Encode $v.version)</td><td>$($buttons -join '')</td></tr>"
+        "<tr><td>$(Encode $ver)</td><td>$($groups -join '')</td></tr>"
     }
     $depsHtml = if ($dependencies.Count -gt 0) {
         "<div class=`"deps`">Dependencies:<ul>" + (($dependencies | ForEach-Object { "<li>$(Encode $_)</li>" }) -join "") + "</ul></div>"
+    } else { "" }
+    $feedLinks = foreach ($feed in $allFeeds) {
+        if ($publicFeedList -contains $feed) {
+            "<li><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span> <code>$BaseUrl/api/$feed/index.json</code></li>"
+        }
+    }
+    $feedsHtml = if ($feedLinks) {
+        "<div class=`"feeds`"><h2>NuGet feeds</h2><ul>$($feedLinks -join '')</ul></div>"
     } else { "" }
 
     $appBody = @"
@@ -252,6 +271,7 @@ foreach ($app in $apps) {
 </div>
 <p>$(Encode $description)</p>
 $depsHtml
+$feedsHtml
 <table class="versions">
   <thead><tr><th>Version</th><th>Download</th></tr></thead>
   <tbody>
