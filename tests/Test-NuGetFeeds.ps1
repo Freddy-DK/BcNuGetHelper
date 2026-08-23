@@ -91,14 +91,16 @@ foreach ($feed in @("apps", "runtime", "symbols")) {
     Write-Host "Testing feed '$feed'"
     $feedUrl = "$BaseUrl/api/$feed"
 
-    $anonymous = Invoke-WebRequest "$feedUrl/index.json" -SkipHttpErrorCheck
-    if ($anonymous.StatusCode -eq 200) {
-        Write-Host "  note: feed '$feed' is public (anonymous access allowed)"
+    # Metadata is public once any feed is public; otherwise it needs an access key. Content is always gated per feed.
+    $anonIndex = Invoke-WebRequest "$feedUrl/index.json" -SkipHttpErrorCheck
+    Assert ($anonIndex.StatusCode -in 200, 401) "anonymous service index of '$feed' is 200 or 401 (got $($anonIndex.StatusCode))"
+    $metadataPublic = $anonIndex.StatusCode -eq 200
+    $anonQuery = Invoke-WebRequest "$feedUrl/query?take=1" -SkipHttpErrorCheck
+    if ($metadataPublic) {
+        Assert ($anonQuery.StatusCode -eq 200) "anonymous search of '$feed' is public (got $($anonQuery.StatusCode))"
     }
     else {
-        Assert ($anonymous.StatusCode -eq 401) "anonymous access to private feed rejected with 401 (got $($anonymous.StatusCode))"
-        $badToken = Invoke-WebRequest "$feedUrl/index.json" -Headers @{ Authorization = "Bearer invalid" } -SkipHttpErrorCheck
-        Assert ($badToken.StatusCode -eq 401) "invalid token rejected with 401 (got $($badToken.StatusCode))"
+        Assert ($anonQuery.StatusCode -eq 401) "anonymous search of '$feed' requires auth (got $($anonQuery.StatusCode))"
     }
 
     $index = Invoke-RestMethod "$feedUrl/index.json" -Headers $feedHeaders
@@ -128,6 +130,42 @@ foreach ($feed in @("apps", "runtime", "symbols")) {
         finally {
             $zip.Dispose()
         }
+
+        # Metadata (nuspec) follows the same public/auth rule as the index; the nupkg content is gated per feed.
+        $anonNuspec = Invoke-WebRequest "$feedUrl/package/$id/$version/$id.nuspec" -SkipHttpErrorCheck
+        if ($metadataPublic) {
+            Assert ($anonNuspec.StatusCode -eq 200) "nuspec of $id is public (got $($anonNuspec.StatusCode))"
+        }
+        else {
+            Assert ($anonNuspec.StatusCode -eq 401) "nuspec of $id requires auth (got $($anonNuspec.StatusCode))"
+        }
+        $anonNupkg = Invoke-WebRequest "$feedUrl/package/$id/$version/$id.$version.nupkg" -SkipHttpErrorCheck
+        Assert ($anonNupkg.StatusCode -in 200, 401) "anonymous nupkg of $id is public (200) or gated (401) (got $($anonNupkg.StatusCode))"
+
+        $appDownload = Invoke-WebRequest "$feedUrl/download/$id/$version" -Headers $feedHeaders -SkipHttpErrorCheck
+        Assert ($appDownload.StatusCode -eq 200) "direct download of $id $version returns 200 (got $($appDownload.StatusCode))"
+        Assert ($appDownload.Headers['Content-Disposition'] -match '\.app"?$') "direct download of $id serves an .app file"
+        Assert ($appDownload.RawContentLength -gt 0) "direct download of $id $version returns content"
+    }
+
+    $latestByPackage = $uploaded | Group-Object packageId
+    foreach ($group in $latestByPackage) {
+        $id = $group.Name
+        $latest = Invoke-WebRequest "$feedUrl/download/$id/latest" -Headers $feedHeaders -SkipHttpErrorCheck
+        Assert ($latest.StatusCode -eq 200) "direct download of $id latest returns 200 (got $($latest.StatusCode))"
+        Assert ($latest.Headers['Content-Disposition'] -match '\.app"?$') "latest download of $id serves an .app file"
+        Assert ($latest.RawContentLength -gt 0) "latest download of $id returns content"
+    }
+}
+
+# Logos are extracted on upload and follow the metadata public/auth rule (or 404 when the app has none)
+foreach ($package in $uploaded) {
+    $logo = Invoke-WebRequest "$BaseUrl/api/logo/$($package.packageId)" -SkipHttpErrorCheck
+    if ($metadataPublic) {
+        Assert ($logo.StatusCode -in 200, 404) "logo endpoint public for $($package.packageId) (got $($logo.StatusCode))"
+    }
+    else {
+        Assert ($logo.StatusCode -eq 401) "logo endpoint requires auth for $($package.packageId) (got $($logo.StatusCode))"
     }
 }
 

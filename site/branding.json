@@ -1,0 +1,12 @@
+{
+  "companyName": "Your Company",
+  "tagline": "Business Central apps",
+  "primaryColor": "#0b5cab",
+  "accentColor": "#1f9d55",
+  "logo": "logo.svg",
+  "favicon": "logo.svg",
+  "footerText": "Powered by BcNuGetHelper",
+  "links": [
+    { "text": "Documentation", "url": "https://github.com/Freddy-DK/BcNuGetHelper" }
+  ]
+}

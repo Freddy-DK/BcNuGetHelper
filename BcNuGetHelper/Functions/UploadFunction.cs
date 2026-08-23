@@ -61,6 +61,19 @@ public class UploadFunction(FeedStorage storage, AlTool alTool, AdminAuthenticat
                 await storage.SavePackageAsync(feed, manifest.PackageId, version, nupkg, ct);
             }
 
+            try
+            {
+                var logo = LogoExtractor.TryExtract(appFile);
+                if (logo is not null)
+                {
+                    await storage.SaveLogoAsync(manifest.PackageId, version, logo.Content, logo.ContentType, ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to extract logo for {PackageId} {Version}", manifest.PackageId, version);
+            }
+
             logger.LogInformation("Uploaded {PackageId} {Version} to all feeds", manifest.PackageId, version);
             results.Add(new UploadedPackage(manifest.PackageId, version, PackageBuilder.Feeds));
         }

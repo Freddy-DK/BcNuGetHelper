@@ -24,7 +24,7 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             return new NotFoundResult();
         }
-        if (!await IsAuthorizedAsync(req, feed, ct))
+        if (!AnyFeedPublic && !await IsAuthorizedAsync(req, feed, ct))
         {
             return Unauthorized(req);
         }
@@ -49,7 +49,7 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             return new NotFoundResult();
         }
-        if (!await IsAuthorizedAsync(req, feed, ct))
+        if (!AnyFeedPublic && !await IsAuthorizedAsync(req, feed, ct))
         {
             return Unauthorized(req);
         }
@@ -94,7 +94,7 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             return new NotFoundResult();
         }
-        if (!await IsAuthorizedAsync(req, feed, ct))
+        if (!AnyFeedPublic && !await IsAuthorizedAsync(req, feed, ct))
         {
             return Unauthorized(req);
         }
@@ -120,7 +120,11 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             return new NotFoundResult();
         }
-        if (!await IsAuthorizedAsync(req, feed, ct))
+
+        // Metadata (nuspec) is readable when any feed is public; the .nupkg content is always gated per feed.
+        var isNuspec = fileName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase);
+        var authorized = (isNuspec && AnyFeedPublic) || await IsAuthorizedAsync(req, feed, ct);
+        if (!authorized)
         {
             return Unauthorized(req);
         }
@@ -131,8 +135,7 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
             return new NotFoundResult();
         }
 
-        // The flat container protocol also serves the nuspec at {id}/{version}/{id}.nuspec
-        if (fileName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase))
+        if (isNuspec)
         {
             await using (stream)
             {
@@ -145,6 +148,96 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             FileDownloadName = $"{id.ToLowerInvariant()}.{version.ToLowerInvariant()}.nupkg",
         };
+    }
+
+    [Function("Logo")]
+    public async Task<IActionResult> Logo(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "logo/{id}/{version?}")] HttpRequest req,
+        string id,
+        string? version,
+        CancellationToken ct)
+    {
+        if (!AnyFeedPublic && !await HasAnyValidKeyAsync(req, ct))
+        {
+            return Unauthorized(req);
+        }
+
+        if (version is not null && version.Equals("latest", StringComparison.OrdinalIgnoreCase))
+        {
+            version = null;
+        }
+
+        var logo = await storage.OpenLogoAsync(id, version, ct);
+        if (logo is null)
+        {
+            return new NotFoundResult();
+        }
+        return new FileStreamResult(logo.Value.Content, logo.Value.ContentType);
+    }
+
+    [Function("AppDownload")]
+    public async Task<IActionResult> AppDownload(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{feed}/download/{id}/{version}")] HttpRequest req,
+        string feed,
+        string id,
+        string version,
+        CancellationToken ct)
+    {
+        if (!IsValidFeed(feed))
+        {
+            return new NotFoundResult();
+        }
+        if (!await IsAuthorizedAsync(req, feed, ct))
+        {
+            return Unauthorized(req);
+        }
+
+        if (version.Equals("latest", StringComparison.OrdinalIgnoreCase))
+        {
+            var versions = await storage.GetVersionsAsync(feed, id, ct);
+            if (versions.Count == 0)
+            {
+                return new NotFoundResult();
+            }
+            version = versions[^1];
+        }
+
+        var stream = await storage.OpenPackageAsync(feed, id, version, ct);
+        if (stream is null)
+        {
+            return new NotFoundResult();
+        }
+
+        await using (stream)
+        {
+            var app = await ExtractAppAsync(stream, ct);
+            if (app is null)
+            {
+                return new NotFoundResult();
+            }
+            return new FileContentResult(app.Value.Content, "application/octet-stream")
+            {
+                FileDownloadName = app.Value.FileName,
+            };
+        }
+    }
+
+    private static async Task<(byte[] Content, string FileName)?> ExtractAppAsync(Stream nupkg, CancellationToken ct)
+    {
+        using var buffer = new MemoryStream();
+        await nupkg.CopyToAsync(buffer, ct);
+        buffer.Position = 0;
+        using var archive = new ZipArchive(buffer, ZipArchiveMode.Read);
+        var entry = archive.Entries.FirstOrDefault(
+            e => e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase));
+        if (entry is null)
+        {
+            return null;
+        }
+        using var entryStream = entry.Open();
+        using var output = new MemoryStream();
+        await entryStream.CopyToAsync(output, ct);
+        return (output.ToArray(), entry.Name);
     }
 
     private static async Task<byte[]?> ExtractNuspecAsync(Stream nupkg, CancellationToken ct)
@@ -183,6 +276,19 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         }
         var accessKey = await accessKeys.FindByKeyAsync(token, ct);
         return accessKey is not null && accessKey.Feeds.Contains(feed, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Metadata is public once any feed is public; a fully private deployment still requires an access key.
+    private static bool AnyFeedPublic => PublicFeeds.Count > 0;
+
+    private async Task<bool> HasAnyValidKeyAsync(HttpRequest req, CancellationToken ct)
+    {
+        var token = ExtractToken(req);
+        if (string.IsNullOrEmpty(token))
+        {
+            return false;
+        }
+        return await accessKeys.FindByKeyAsync(token, ct) is not null;
     }
 
     private static string? ExtractToken(HttpRequest req)

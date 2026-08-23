@@ -25,6 +25,8 @@ Each feed implements the NuGet v3 resources needed by [BcContainerHelper](https:
 - **PackageBaseAddress (flat container)** —
   - `GET api/{feed}/package/{id}/index.json` (version list)
   - `GET api/{feed}/package/{id}/{version}/{id}.{version}.nupkg` (download)
+- **Direct .app download** — `GET api/{feed}/download/{id}/{version}` returns the raw `.app` for that flavor. `{version}` may be `latest`. These are stable, non-expiring URLs (anonymous for public feeds).
+- **Logo** — `GET api/logo/{id}` (or `api/logo/{id}/{version}`) returns the app logo extracted from the `.app` on upload.
 
 There is no NuGet push/publish support. All uploads go through the upload endpoint:
 
@@ -35,6 +37,8 @@ Uploaded apps are processed with the [AL development tools](https://learn.micros
 ## Public and private feeds
 
 Each feed is either **public** (anonymous read access) or **private** (requires an access key). Which feeds are public is controlled by the `PUBLIC_FEEDS` repository variable; all feeds are private by default.
+
+Package **metadata** (service index, search, version lists, nuspec and logo) is served anonymously as soon as **at least one** feed is public \u2014 only the package/app **content** downloads (`.nupkg` files and the `api/{feed}/download/...` `.app` endpoint) remain gated per feed. If **no** feed is public, metadata also requires an access key, so a fully private deployment exposes nothing anonymously.
 
 Access keys are managed through Entra-protected endpoints:
 
@@ -87,7 +91,7 @@ Invoke-RestMethod `
 
 ## Deployment
 
-Deployment runs entirely from your fork using GitHub Actions and Terraform. Terraform state is stored in an Azure storage account that the workflow bootstraps automatically.
+Deployment runs entirely from your fork using GitHub Actions and Terraform.
 
 ### 1. Fork this repository
 
@@ -213,13 +217,42 @@ func start
 
 Without a `PackagesStorageAccountName` setting the app falls back to the local Azurite emulator (`UseDevelopmentStorage=true`).
 
+## Website (GitHub Pages)
+
+A static, brandable catalog website can be published to GitHub Pages. It lists every app that is available on a public feed and, per app, shows the logo, description and dependencies (from the latest version) plus a table of all versions with direct download links for each public feed flavor (Full app / Runtime / Symbols).
+
+Because browser downloads only work for public feeds, the site lists apps only when at least one feed is public (`PUBLIC_FEEDS`). If no feed is public, only the branded front page is rendered. The build reads metadata anonymously from the public feeds — no credentials are used.
+
+To enable it:
+
+1. In your fork, go to **Settings → Pages** and set **Source** to **GitHub Actions**.
+2. Set the `PUBLIC_FEEDS` variable to the feeds you want to expose (e.g. `apps,runtime,symbols`).
+3. Run the **Deploy Pages** workflow (Actions → Deploy Pages → Run workflow).
+
+### Company branding
+
+Edit [`site/branding.json`](site/branding.json) (company name, tagline, colors, logo, favicon, footer, links) and drop your own files in [`site/assets/`](site/assets):
+
+- `logo.svg` — header/app logo
+- `favicon.svg` — browser icon
+- `custom.css` — appended after the generated theme, so any rule you add wins
+
+Build it locally to preview:
+
+```powershell
+./site/Build-Site.ps1 -BaseUrl "https://<functionapp>.azurewebsites.net" -PublicFeeds "apps,runtime,symbols"
+# open ./_site/index.html
+```
+
 ## Repository layout
 
 ```
 .github/workflows/deploy.yml            Full deployment (Terraform + function app)
 .github/workflows/deploy-function.yml   Function app only (manual trigger)
+.github/workflows/deploy-pages.yml      Build & publish the catalog website to GitHub Pages
 .github/workflows/test.yml              End-to-end tests against the deployed service
 terraform/                              Terraform configuration
 BcNuGetHelper/                          Azure Function app (.NET 10 isolated)
+site/                                   Static catalog website (generator + branding)
 tests/                                  Test scripts
 ```

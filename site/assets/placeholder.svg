@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="App">
+  <rect width="64" height="64" rx="12" fill="#e2e8f0"/>
+  <path d="M32 16l14 8v16l-14 8-14-8V24l14-8zm0 5.3L23 26v12l9 4.7 9-4.7V26l-9-4.7z" fill="#94a3b8"/>
+</svg>

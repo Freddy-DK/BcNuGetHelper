@@ -152,6 +152,43 @@ public class FeedStorage(BlobServiceClient blobServiceClient)
         var v = version.ToLowerInvariant();
         return $"{feed}/{id}/{v}/{id}.{v}.nupkg";
     }
+
+    public async Task SaveLogoAsync(string packageId, string version, byte[] content, string contentType, CancellationToken ct)
+    {
+        await _container.CreateIfNotExistsAsync(cancellationToken: ct);
+        var blob = _container.GetBlobClient(LogoBlobPath(packageId, version));
+        await blob.UploadAsync(
+            new BinaryData(content),
+            new BlobUploadOptions { HttpHeaders = new BlobHttpHeaders { ContentType = contentType } },
+            ct);
+    }
+
+    public async Task<(Stream Content, string ContentType)?> OpenLogoAsync(string packageId, string? version, CancellationToken ct)
+    {
+        // Logos are app-level; resolve against the apps feed versions (default to the latest).
+        var versions = await GetVersionsAsync(PackageBuilder.FeedApps, packageId, ct);
+        var resolved = version is null
+            ? versions.LastOrDefault()
+            : versions.FirstOrDefault(v => VersionHelper.AreEqual(v, version)) ?? version;
+        if (resolved is null)
+        {
+            return null;
+        }
+
+        var blob = _container.GetBlobClient(LogoBlobPath(packageId, resolved));
+        try
+        {
+            var response = await blob.DownloadStreamingAsync(cancellationToken: ct);
+            return (response.Value.Content, response.Value.Details.ContentType ?? "application/octet-stream");
+        }
+        catch (RequestFailedException ex) when (ex.ErrorCode == BlobErrorCode.BlobNotFound)
+        {
+            return null;
+        }
+    }
+
+    private static string LogoBlobPath(string packageId, string version) =>
+        $"logos/{packageId.ToLowerInvariant()}/{version.ToLowerInvariant()}/logo";
 }
 
 /// <summary>Scans the package blobs into memory during startup.</summary>

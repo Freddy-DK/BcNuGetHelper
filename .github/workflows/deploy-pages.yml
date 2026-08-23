@@ -1,0 +1,55 @@
+name: Deploy Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  BASE_NAME: ${{ vars.BASE_NAME }}
+  PUBLIC_FEEDS: ${{ vars.PUBLIC_FEEDS }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build site
+        run: |
+          # Metadata is read anonymously from the public feeds; no credentials needed.
+          ./site/Build-Site.ps1 `
+            -BaseUrl "https://$($env:BASE_NAME)-func.azurewebsites.net" `
+            -PublicFeeds "$($env:PUBLIC_FEEDS)" `
+            -OutputDir "_site"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
