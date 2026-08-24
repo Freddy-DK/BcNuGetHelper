@@ -83,6 +83,78 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         return new OkObjectResult(new SearchResponse(matches.Count, data));
     }
 
+    [Function("AppServiceIndex")]
+    public async Task<IActionResult> AppServiceIndex(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{feed}/{id}/index.json")] HttpRequest req,
+        string feed,
+        string id,
+        CancellationToken ct)
+    {
+        if (!IsValidFeed(feed))
+        {
+            return new NotFoundResult();
+        }
+        if (!AnyFeedPublic && !await IsAuthorizedAsync(req, feed, ct))
+        {
+            return Unauthorized(req);
+        }
+        if ((await storage.GetVersionsAsync(feed, id, ct)).Count == 0)
+        {
+            return new NotFoundResult();
+        }
+
+        var baseUrl = FeedBaseUrl(req, feed);
+        var idLower = id.ToLowerInvariant();
+        return new OkObjectResult(new ServiceIndex("3.0.0",
+        [
+            new($"{baseUrl}/{idLower}/query", "SearchQueryService"),
+            new($"{baseUrl}/{idLower}/query", "SearchQueryService/3.0.0-beta"),
+            new($"{baseUrl}/{idLower}/query", "SearchQueryService/3.0.0-rc"),
+            new($"{baseUrl}/package/", "PackageBaseAddress/3.0.0"),
+        ]));
+    }
+
+    [Function("AppSearch")]
+    public async Task<IActionResult> AppSearch(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{feed}/{id}/query")] HttpRequest req,
+        string feed,
+        string id,
+        CancellationToken ct)
+    {
+        if (!IsValidFeed(feed))
+        {
+            return new NotFoundResult();
+        }
+        if (!AnyFeedPublic && !await IsAuthorizedAsync(req, feed, ct))
+        {
+            return Unauthorized(req);
+        }
+
+        var q = req.Query["q"].ToString();
+        var tokens = q.Split([' ', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var idLower = id.ToLowerInvariant();
+        var versions = await storage.GetVersionsAsync(feed, id, ct);
+        var baseUrl = FeedBaseUrl(req, feed);
+
+        var matches = versions.Count > 0
+            && tokens.All(token => idLower.Contains(token, StringComparison.OrdinalIgnoreCase));
+        var data = matches
+            ? new List<SearchResult>
+            {
+                new(
+                    RegistrationId: $"{baseUrl}/package/{idLower}/index.json",
+                    Type: "Package",
+                    Id: idLower,
+                    Version: versions[^1],
+                    Versions: versions
+                        .Select(v => new SearchResultVersion($"{baseUrl}/package/{idLower}/{v}/{idLower}.{v}.nupkg", v))
+                        .ToList()),
+            }
+            : [];
+
+        return new OkObjectResult(new SearchResponse(data.Count, data));
+    }
+
     [Function("PackageVersions")]
     public async Task<IActionResult> PackageVersions(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{feed}/package/{id}/index.json")] HttpRequest req,

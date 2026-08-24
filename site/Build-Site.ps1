@@ -151,6 +151,8 @@ table.versions th { font-size: .78rem; text-transform: uppercase; letter-spacing
 .feeds ul { list-style: none; padding: 0; margin: 0; }
 .feeds li { padding: .2rem 0; }
 .feeds code { background: #eef2f7; padding: .15rem .4rem; border-radius: 4px; font-size: .85rem; }
+.feeds p { font-size: .85rem; color: #64748b; margin: .2rem 0 .6rem; }
+.feed-note { font-size: .72rem; color: #94a3b8; margin-left: .3rem; }
 .empty { text-align: center; color: #64748b; padding: 3rem 1rem; }
 .back { display: inline-block; margin-bottom: 1rem; font-size: .9rem; }
 "@
@@ -253,7 +255,9 @@ foreach ($app in $apps) {
     } else { "" }
     $feedLinks = foreach ($feed in $allFeeds) {
         if ($publicFeedList -contains $feed) {
-            "<li><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span> <code>$BaseUrl/api/$feed/index.json</code></li>"
+            $label = Encode $feedLabels[$feed]
+            "<li><span class=`"dl-label`">$label</span> <code>$BaseUrl/api/$feed/$(Encode $id)/index.json</code> <span class=`"feed-note`">this app only</span></li>" +
+            "<li><span class=`"dl-label`">$label</span> <code>$BaseUrl/api/$feed/index.json</code> <span class=`"feed-note`">all apps</span></li>"
         }
     }
     $feedsHtml = if ($feedLinks) {
@@ -285,10 +289,19 @@ $($rows -join "`n")
 }
 
 # --- Landing page ---
+$globalFeedLinks = foreach ($feed in $allFeeds) {
+    if ($publicFeedList -contains $feed) {
+        "<li><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span> <code>$BaseUrl/api/$feed/index.json</code></li>"
+    }
+}
+$globalFeedsHtml = if ($globalFeedLinks) {
+    "<div class=`"feeds`"><h2>NuGet feeds</h2><p>Feeds serving every app below. Use an app's page for a feed scoped to that single app.</p><ul>$($globalFeedLinks -join '')</ul></div>"
+} else { "" }
+
 $listBody = if ($cards.Count -gt 0) {
-    "<h1>Apps</h1>`n<div class=`"app-grid`">`n" + ($cards -join "`n") + "`n</div>"
+    "<h1>Apps</h1>`n$globalFeedsHtml`n<div class=`"app-grid`">`n" + ($cards -join "`n") + "`n</div>"
 } else {
-    "<section class=`"empty`"><h1>$(Encode $branding.companyName)</h1><p>No apps published yet.</p></section>"
+    "<section class=`"empty`"><h1>$(Encode $branding.companyName)</h1>$globalFeedsHtml<p>No apps published yet.</p></section>"
 }
 Set-Content (Join-Path $OutputDir "index.html") (New-Page -Title $branding.companyName -Body $listBody -AssetPrefix "") -Encoding utf8
 
