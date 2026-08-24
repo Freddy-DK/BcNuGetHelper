@@ -9,6 +9,7 @@
   "links": [
     { "text": "freddy.dk", "url": "https://freddy.dk" },
     { "text": "Freddy's Blog", "url": "https://freddysblog.com" },
-    { "text": "BcNuGetHelper on GitHub", "url": "https://github.com/Freddy-DK/BcNuGetHelper" }
+    { "text": "BcNuGetHelper on GitHub", "url": "https://github.com/Freddy-DK/BcNuGetHelper" },
+    { "text": "Sponsor me", "url": "https://github.com/sponsors/Freddy-DK" }
   ]
 }
