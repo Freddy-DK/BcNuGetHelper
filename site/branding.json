@@ -7,6 +7,8 @@
   "favicon": "favicon.png",
   "footerText": "Powered by BcNuGetHelper",
   "links": [
-    { "text": "Documentation", "url": "https://github.com/Freddy-DK/BcNuGetHelper" }
+    { "text": "freddy.dk", "url": "https://freddy.dk" },
+    { "text": "Freddy's Blog", "url": "https://freddysblog.com" },
+    { "text": "BcNuGetHelper on GitHub", "url": "https://github.com/Freddy-DK/BcNuGetHelper" }
   ]
 }
