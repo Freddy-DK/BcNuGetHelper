@@ -96,6 +96,21 @@ function New-Page {
 $Body
 </main>
 <footer class="site-footer">$(Encode $branding.footerText)</footer>
+<script>
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.copy-btn');
+  if (!btn) return;
+  var code = btn.previousElementSibling;
+  var text = code ? code.textContent : '';
+  navigator.clipboard.writeText(text).then(function () {
+    btn.classList.add('copied');
+    var label = btn.getAttribute('data-label') || btn.textContent;
+    btn.setAttribute('data-label', label);
+    btn.textContent = 'Copied';
+    setTimeout(function () { btn.textContent = label; btn.classList.remove('copied'); }, 1500);
+  });
+});
+</script>
 </body>
 </html>
 "@
@@ -153,6 +168,9 @@ table.versions th { font-size: .78rem; text-transform: uppercase; letter-spacing
 .feeds code { background: #eef2f7; padding: .15rem .4rem; border-radius: 4px; font-size: .85rem; }
 .feeds p { font-size: .85rem; color: #64748b; margin: .2rem 0 .6rem; }
 .feed-note { font-size: .72rem; color: #94a3b8; margin-left: .3rem; }
+.copy-btn { margin-left: .4rem; padding: .1rem .5rem; font-size: .72rem; color: var(--brand-primary); background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; cursor: pointer; }
+.copy-btn:hover { border-color: var(--brand-primary); }
+.copy-btn.copied { color: #fff; background: var(--brand-accent); border-color: var(--brand-accent); }
 .empty { text-align: center; color: #64748b; padding: 3rem 1rem; }
 .back { display: inline-block; margin-bottom: 1rem; font-size: .9rem; }
 "@
@@ -255,7 +273,7 @@ foreach ($app in $apps) {
     } else { "" }
     $feedLinks = foreach ($feed in $allFeeds) {
         if ($publicFeedList -contains $feed) {
-            "<li><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span> <code>$BaseUrl/api/$feed/$(Encode $id)/index.json</code></li>"
+            "<li><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span> <code>$BaseUrl/api/$feed/$(Encode $id)/index.json</code><button type=`"button`" class=`"copy-btn`">Copy</button></li>"
         }
     }
     $feedsHtml = if ($feedLinks) {
@@ -289,7 +307,7 @@ $($rows -join "`n")
 # --- Landing page ---
 $globalFeedLinks = foreach ($feed in $allFeeds) {
     if ($publicFeedList -contains $feed) {
-        "<li><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span> <code>$BaseUrl/api/$feed/index.json</code></li>"
+        "<li><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span> <code>$BaseUrl/api/$feed/index.json</code><button type=`"button`" class=`"copy-btn`">Copy</button></li>"
     }
 }
 $globalFeedsHtml = if ($globalFeedLinks) {
