@@ -227,7 +227,8 @@ To enable it:
 
 1. In your fork, go to **Settings → Pages** and set **Source** to **GitHub Actions**.
 2. Set the `PUBLIC_FEEDS` variable to the feeds you want to expose (e.g. `apps,runtime,symbols`).
-3. Run the **Deploy Pages** workflow (Actions → Deploy Pages → Run workflow).
+3. **Re-brand the site** by editing [`site/branding.json`](site/branding.json) (see below) so it shows your company instead of the defaults.
+4. Run the **Deploy Pages** workflow (Actions → Deploy Pages → Run workflow).
 
 ### Company branding
 
