@@ -69,7 +69,7 @@ function Get-DisplayName([string] $packageId) {
 function New-Page {
     param([string] $Title, [string] $Body, [string] $AssetPrefix)
     $links = ($branding.links | ForEach-Object {
-        "<a href=`"$(Encode $_.url)`">$(Encode $_.text)</a>"
+        "<a href=`"$(Encode $_.url)`" target=`"_blank`" rel=`"noopener`">$(Encode $_.text)</a>"
     }) -join ""
     return @"
 <!DOCTYPE html>
