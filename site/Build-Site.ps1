@@ -255,13 +255,11 @@ foreach ($app in $apps) {
     } else { "" }
     $feedLinks = foreach ($feed in $allFeeds) {
         if ($publicFeedList -contains $feed) {
-            $label = Encode $feedLabels[$feed]
-            "<li><span class=`"dl-label`">$label</span> <code>$BaseUrl/api/$feed/$(Encode $id)/index.json</code> <span class=`"feed-note`">this app only</span></li>" +
-            "<li><span class=`"dl-label`">$label</span> <code>$BaseUrl/api/$feed/index.json</code> <span class=`"feed-note`">all apps</span></li>"
+            "<li><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span> <code>$BaseUrl/api/$feed/$(Encode $id)/index.json</code></li>"
         }
     }
     $feedsHtml = if ($feedLinks) {
-        "<div class=`"feeds`"><h2>NuGet feeds</h2><ul>$($feedLinks -join '')</ul></div>"
+        "<div class=`"feeds`"><h2>Scoped NuGet feeds</h2><p>Feeds serving only this app. For feeds serving every app, see the <a href=`"../../index.html`">publisher feeds</a>.</p><ul>$($feedLinks -join '')</ul></div>"
     } else { "" }
 
     $appBody = @"
@@ -295,7 +293,7 @@ $globalFeedLinks = foreach ($feed in $allFeeds) {
     }
 }
 $globalFeedsHtml = if ($globalFeedLinks) {
-    "<div class=`"feeds`"><h2>NuGet feeds</h2><p>Feeds serving every app below. Use an app's page for a feed scoped to that single app.</p><ul>$($globalFeedLinks -join '')</ul></div>"
+    "<div class=`"feeds`"><h2>Publisher NuGet feeds</h2><p>Feeds serving every app below. Use an app's page for a feed scoped to that single app.</p><ul>$($globalFeedLinks -join '')</ul></div>"
 } else { "" }
 
 $listBody = if ($cards.Count -gt 0) {
