@@ -7,10 +7,3 @@ publish/
 
 # Azure Functions
 local.settings.json
-
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log

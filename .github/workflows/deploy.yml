@@ -15,14 +15,8 @@ defaults:
 
 env:
   BASE_NAME: ${{ vars.BASE_NAME }}
-  AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
   RESOURCE_GROUP_NAME: ${{ vars.RESOURCE_GROUP_NAME || format('{0}-rg', vars.BASE_NAME) }}
-  # Terraform azurerm provider + backend authentication (OIDC)
-  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  ARM_USE_OIDC: "true"
-  ARM_USE_AZUREAD: "true"
 
 jobs:
   infrastructure:
@@ -31,6 +25,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Validate inputs
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:BASE_NAME)) {
+            throw "BASE_NAME variable is not set"
+          }
+          if ($env:BASE_NAME -notmatch '^[a-z][a-z0-9]{2,16}$') {
+            throw "BASE_NAME '$($env:BASE_NAME)' is invalid: 3-17 lowercase letters/digits, starting with a letter"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:AZURE_LOCATION)) {
+            throw "AZURE_LOCATION variable is not set"
+          }
+
       - name: Azure login
         uses: azure/login@v3
         with:
@@ -38,49 +44,33 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Bootstrap resource group and Terraform state storage
+      - name: Validate location
         uses: azure/cli@v3
         with:
           inlineScript: |
-            az group create --name "$RESOURCE_GROUP_NAME" --location "$AZURE_LOCATION" --output none
-            az storage account create \
-              --name "${BASE_NAME}state" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --location "$AZURE_LOCATION" \
-              --sku Standard_LRS \
-              --kind StorageV2 \
-              --min-tls-version TLS1_2 \
-              --allow-blob-public-access false \
-              --output none
-            az storage container create \
-              --name tfstate \
-              --account-name "${BASE_NAME}state" \
-              --auth-mode login \
-              --output none
+            if [ -z "$(az account list-locations --query "[?name=='$AZURE_LOCATION'].name" -o tsv)" ]; then
+              echo "AZURE_LOCATION '$AZURE_LOCATION' is not a valid Azure region"
+              exit 1
+            fi
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+      # The resource group is created up front by bicep/bootstrap.bicep (run once locally).
+      # This applies the main template incrementally, so it only updates what changed.
+      - name: Deploy infrastructure (Bicep)
+        uses: azure/cli@v3
         with:
-          terraform_wrapper: false
-
-      - name: Terraform init
-        working-directory: terraform
-        run: |
-          terraform init `
-            -backend-config="resource_group_name=$env:RESOURCE_GROUP_NAME" `
-            -backend-config="storage_account_name=$($env:BASE_NAME)state" `
-            -backend-config="container_name=tfstate" `
-            -backend-config="key=bcnugethelper.tfstate"
-
-      - name: Terraform apply
-        working-directory: terraform
+          inlineScript: |
+            az deployment group create \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --template-file bicep/main.bicep \
+              --parameters \
+                baseName="$BASE_NAME" \
+                location="$AZURE_LOCATION" \
+                publicFeeds="$PUBLIC_FEEDS" \
+                adminClientId="$ADMIN_CLIENT_ID" \
+              --output none
         env:
-          TF_VAR_base_name: ${{ env.BASE_NAME }}
-          TF_VAR_location: ${{ env.AZURE_LOCATION }}
-          TF_VAR_resource_group_name: ${{ env.RESOURCE_GROUP_NAME }}
-          TF_VAR_public_feeds: ${{ vars.PUBLIC_FEEDS }}
-          TF_VAR_admin_client_id: ${{ vars.ADMIN_CLIENT_ID }}
-        run: terraform apply -auto-approve -input=false
+          PUBLIC_FEEDS: ${{ vars.PUBLIC_FEEDS }}
+          ADMIN_CLIENT_ID: ${{ vars.ADMIN_CLIENT_ID }}
 
   function:
     needs: infrastructure

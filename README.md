@@ -91,62 +91,47 @@ Invoke-RestMethod `
 
 ## Deployment
 
-Deployment runs entirely from your fork using GitHub Actions and Terraform.
+Deployment runs entirely from your fork using GitHub Actions and [Bicep](https://learn.microsoft.com/azure/azure-resource-manager/bicep/). The templates live in [`bicep/`](bicep). There is no Terraform state to manage: `az deployment` reconciles against the live resources in your subscription, applying only the differences on each run (ARM *incremental* mode). Removing a resource from a template does **not** delete it — delete such resources manually.
 
 ### 1. Fork this repository
 
 ### 2. Create a managed identity for GitHub OIDC
 
-The deploy workflow authenticates with a **user-assigned managed identity** using GitHub OIDC federation — no app registration and no stored credentials. All roles are scoped to the deployment resource group only, so the identity (and the resource group) must be created up front:
+The deploy workflow authenticates with a **user-assigned managed identity** using GitHub OIDC federation — no app registration and no stored credentials. This identity (and the resource group) must exist before the workflow can run, so it is created once locally with your own credentials via [`bicep/bootstrap.bicep`](bicep/bootstrap.bicep). All roles are scoped to the deployment resource group only.
 
 ```powershell
 $repo         = "<owner/repo>"                     # Owner and repo of BcNuGetHelper fork
 $location     = "<azure location>"                 # e.g. westeurope
 $baseName     = "<base name>"                      # e.g. nghfreddydk (3-17 lowercase letters/digits, globally unique)
-$rg           = "$($basename)-rg"                  # e.g. nghfreddydk-rg
+$rg           = "$($baseName)-rg"                  # e.g. nghfreddydk-rg
 $subscription = az account show --query id -o tsv  # subscription ID
 
-# GitHub now embeds account and repository IDs in the OIDC subject claim
-$repoInfo  = Invoke-RestMethod "https://api.github.com/repos/$repo"
-$idSubject = "repo:$($repoInfo.owner.login)@$($repoInfo.owner.id)/$($repoInfo.name)@$($repoInfo.id):ref:refs/heads/main"
+# OIDC subjects. GitHub is rolling out a claim format that embeds account and repository IDs,
+# so register both the classic and the ID-based subject.
+$repoInfo         = Invoke-RestMethod "https://api.github.com/repos/$repo"
+$subjectClassic   = "repo:$($repo):ref:refs/heads/main"
+$subjectWithIds   = "repo:$($repoInfo.owner.login)@$($repoInfo.owner.id)/$($repoInfo.name)@$($repoInfo.id):ref:refs/heads/main"
 
 # Verify the base name is available before creating anything
-foreach ($name in @($baseName, "$($baseName)state")) {
-    if ((az storage account check-name --name $name --query nameAvailable -o tsv) -ne "true") {
-        throw "Storage account name '$name' is not available - choose another base name"
-    }
+if ((az storage account check-name --name $baseName --query nameAvailable -o tsv) -ne "true") {
+    throw "Storage account name '$baseName' is not available - choose another base name"
 }
 $body = '{"name": "' + $baseName + '-func", "type": "Microsoft.Web/sites"}'
 if ((az rest --method post --url "https://management.azure.com/subscriptions/$subscription/providers/Microsoft.Web/checknameavailability?api-version=2023-12-01" --body $body --query nameAvailable -o tsv) -ne "true") {
     throw "Function app name '$($baseName)-func' is not available - choose another base name"
 }
 
-az group create --name $rg --location $location | Out-Null
-$identity = az identity create --name github-deploy --resource-group $rg
-az identity federated-credential create `
-    --identity-name github-deploy `
-    --resource-group $rg `
-    --name github-main `
-    --issuer "https://token.actions.githubusercontent.com" `
-    --subject "repo:$($repo):ref:refs/heads/main" `
-    --audiences "api://AzureADTokenExchange" | Out-Null
-az identity federated-credential create `
-    --identity-name github-deploy `
-    --resource-group $rg `
-    --name github-main-ids `
-    --issuer "https://token.actions.githubusercontent.com" `
-    --subject $idSubject `
-    --audiences "api://AzureADTokenExchange" | Out-Null
-
-$principalId = az identity show --name github-deploy --resource-group $rg --query principalId -o tsv
-az role assignment create --assignee $principalId --role "Contributor" --scope "/subscriptions/$subscription/resourceGroups/$rg" | Out-Null
-az role assignment create --assignee $principalId --role "Role Based Access Control Administrator" --scope "/subscriptions/$subscription/resourceGroups/$rg" | Out-Null
-az role assignment create --assignee $principalId --role "Storage Blob Data Contributor" --scope "/subscriptions/$subscription/resourceGroups/$rg" | Out-Null
+# Create the resource group, the deploy identity, its federated credentials and role assignments
+$deploy = az deployment sub create `
+    --location $location `
+    --template-file bicep/bootstrap.bicep `
+    --parameters baseName=$baseName location=$location resourceGroupName=$rg `
+        githubSubjectClassic=$subjectClassic githubSubjectWithIds=$subjectWithIds `
+    --query properties.outputs -o json | ConvertFrom-Json
 
 # Configure the repository secrets and variables (requires gh auth login)
-$clientId = az identity show --name github-deploy --resource-group $rg --query clientId -o tsv
 $tenantId = az account show --query tenantId -o tsv
-gh secret set AZURE_CLIENT_ID --repo $repo --body $clientId
+gh secret set AZURE_CLIENT_ID --repo $repo --body $deploy.deployClientId.value
 gh secret set AZURE_TENANT_ID --repo $repo --body $tenantId
 gh secret set AZURE_SUBSCRIPTION_ID --repo $repo --body $subscription
 
@@ -159,9 +144,9 @@ gh variable set RESOURCE_GROUP_NAME --repo $repo --body $rg
 # gh variable set ADMIN_CLIENT_ID --repo $repo --body "<client-id>"
 ```
 
-Roles: **Contributor** (create resources), **Role Based Access Control Administrator** (create the role assignment for the function's managed identity) and **Storage Blob Data Contributor** (read/write Terraform state).
+Roles granted to the deploy identity: **Contributor** (create resources), **Role Based Access Control Administrator** (create the role assignment for the function's managed identity) and **Storage Blob Data Contributor** (function content deployment to the deployments container).
 
-> Two federated credentials are created because GitHub is rolling out a new OIDC subject claim format that embeds account and repository IDs (`repo:owner@id/repo@id:...`). Registering both the classic and the ID-based subject makes login work either way. If login still fails with `AADSTS700213`, copy the exact "subject claim" shown in the failed *Azure login* step into a federated credential.
+> Two federated credentials are registered because GitHub is rolling out a new OIDC subject claim format that embeds account and repository IDs (`repo:owner@id/repo@id:...`). Registering both the classic and the ID-based subject makes login work either way. If login still fails with `AADSTS700213`, copy the exact "subject claim" shown in the failed *Azure login* step into a federated credential.
 
 ### 3. Configure repository settings
 
@@ -180,7 +165,7 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `BASE_NAME` | Yes | — | Base name for all Azure resources. Lowercase letters and digits only, 3–17 characters, globally unique (used for storage account names). Example: `mybcnuget` |
-| `AZURE_LOCATION` | Yes | `westeurope` | Azure region to deploy to |
+| `AZURE_LOCATION` | Yes | — | Azure region to deploy to |
 | `RESOURCE_GROUP_NAME` | No | `<BASE_NAME>-rg` | Name of the resource group (must match the one created in step 2) |
 | `PUBLIC_FEEDS` | No | (empty — all feeds private) | Comma-separated list of feeds served without authentication, e.g. `apps,runtime,symbols` |
 | `ADMIN_CLIENT_ID` | No | (empty — any caller from your tenant) | Restrict the admin endpoints (upload, access keys) to a single client/application id. When empty, any valid Entra token from your tenant (for the ARM audience) is accepted |
@@ -190,9 +175,8 @@ All settings are configured as repository **secrets** and **variables** (Setting
 Run the **Deploy** workflow manually (Actions → Deploy → Run workflow). The workflow:
 
 1. Logs in to Azure using OIDC (no stored credentials)
-2. Bootstraps the resource group and Terraform state storage (`<BASE_NAME>state`)
-3. Runs `terraform apply` to create/update all resources
-4. Builds the .NET 10 function app and deploys it
+2. Deploys `bicep/main.bicep` to the resource group (`az deployment group create`, incremental) to create/update all resources
+3. Builds the .NET 10 function app and deploys it
 
 ### Resources created
 
@@ -200,7 +184,6 @@ Run the **Deploy** workflow manually (Actions → Deploy → Run workflow). The 
 |----------|------|
 | Resource group | `<RESOURCE_GROUP_NAME>` |
 | Storage account (packages + deployments) | `<BASE_NAME>` |
-| Storage account (Terraform state) | `<BASE_NAME>state` |
 | User-assigned managed identity | `<BASE_NAME>-id` |
 | App Service plan (Flex Consumption) | `<BASE_NAME>-plan` |
 | Function app | `<BASE_NAME>-func` |
@@ -248,11 +231,11 @@ Build it locally to preview:
 ## Repository layout
 
 ```
-.github/workflows/deploy.yml            Full deployment (Terraform + function app)
+.github/workflows/deploy.yml            Full deployment (Bicep + function app)
 .github/workflows/deploy-function.yml   Function app only (manual trigger)
 .github/workflows/deploy-pages.yml      Build & publish the catalog website to GitHub Pages
 .github/workflows/test.yml              End-to-end tests against the deployed service
-terraform/                              Terraform configuration
+bicep/                                  Bicep templates (bootstrap + main infrastructure)
 BcNuGetHelper/                          Azure Function app (.NET 10 isolated)
 site/                                   Static catalog website (generator + branding)
 tests/                                  Test scripts
