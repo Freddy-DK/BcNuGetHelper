@@ -283,7 +283,9 @@ foreach ($app in $apps) {
                 # versions are the supported BC versions.
                 $compiledId = $null
                 try {
-                    $rn = [xml](Invoke-RestMethod "$BaseUrl/api/runtime/package/$(Encode $runtimeIndirectId)/$(Encode $ver)/$(Encode $runtimeIndirectId).nuspec")
+                    # BcContainerHelper writes the runtime nuspec with a UTF-8 BOM, which breaks [xml]; strip it.
+                    $rnText = (Invoke-WebRequest "$BaseUrl/api/runtime/package/$(Encode $runtimeIndirectId)/$(Encode $ver)/$(Encode $runtimeIndirectId).nuspec").Content
+                    $rn = [xml]($rnText.TrimStart([char]0xFEFF))
                     $compiledId = @($rn.package.metadata.dependencies.dependency | Where-Object { $_.id -match '\.runtime-' })[0].id
                 }
                 catch {
