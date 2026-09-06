@@ -6,6 +6,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  actions: read
 
 concurrency: test
 
@@ -39,6 +40,29 @@ jobs:
           Write-Host "::add-mask::$token"
           "access_token=$token" >> $env:GITHUB_OUTPUT
 
+      - name: Check runtime generation is configured
+        env:
+          GH_APP_CLIENT_ID: ${{ vars.GH_APP_CLIENT_ID }}
+          GH_APP_INSTALLATION_ID: ${{ vars.GH_APP_INSTALLATION_ID }}
+          GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+        run: |
+          $missing = @()
+          if (-not $env:GH_APP_CLIENT_ID) { $missing += 'GH_APP_CLIENT_ID (variable)' }
+          if (-not $env:GH_APP_INSTALLATION_ID) { $missing += 'GH_APP_INSTALLATION_ID (variable)' }
+          if (-not $env:GH_APP_PRIVATE_KEY) { $missing += 'GH_APP_PRIVATE_KEY (secret)' }
+          if ($missing.Count -gt 0) { throw "Runtime generation is not configured; missing: $($missing -join ', ')" }
+          Write-Host "  OK: GitHub App configured for runtime generation"
+
+      - name: Baseline runtime workflow runs
+        id: baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $runs = gh api "repos/${{ github.repository }}/actions/workflows/generate-runtime-nuget.yml/runs?per_page=1" | ConvertFrom-Json
+          $lastId = if ($runs.total_count -gt 0) { $runs.workflow_runs[0].id } else { 0 }
+          Write-Host "  latest existing runtime run id: $lastId"
+          "last_run_id=$lastId" >> $env:GITHUB_OUTPUT
+
       - name: Run NuGet feed tests
         env:
           ADMIN_TOKEN: ${{ steps.token.outputs.access_token }}
@@ -48,6 +72,23 @@ jobs:
             -BaseUrl "https://$($env:BASE_NAME)-func.azurewebsites.net" `
             -AccessToken $env:ADMIN_TOKEN `
             -GitHubToken $env:GH_TOKEN
+
+      - name: Verify runtime workflow was dispatched
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LAST_RUN_ID: ${{ steps.baseline.outputs.last_run_id }}
+        run: |
+          # Uploading dispatches the generate-runtime workflow; confirm a new run appeared.
+          $lastId = [int64]$env:LAST_RUN_ID
+          $deadline = (Get-Date).AddMinutes(3)
+          $new = @()
+          do {
+            Start-Sleep -Seconds 5
+            $runs = gh api "repos/${{ github.repository }}/actions/workflows/generate-runtime-nuget.yml/runs?per_page=30" | ConvertFrom-Json
+            $new = @($runs.workflow_runs | Where-Object { [int64]$_.id -gt $lastId })
+          } while ($new.Count -eq 0 -and (Get-Date) -lt $deadline)
+          if ($new.Count -eq 0) { throw "generate-runtime-nuget workflow was not dispatched after upload" }
+          Write-Host "  OK: runtime workflow dispatched ($($new.Count) new run(s)): $(($new | ForEach-Object { $_.id }) -join ', ')"
 
       - name: Run BcContainerHelper tests
         env:

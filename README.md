@@ -224,8 +224,9 @@ To dispatch a workflow securely — without a user-bound Personal Access Token �
 authenticates as a **GitHub App**. To enable runtime generation:
 
 1. **Create a GitHub App** (Settings → Developer settings → GitHub Apps → New). Grant repository
-   permissions **Actions: Read and write**, **Contents: Read-only**, **Metadata: Read-only**.
-   Generate a **private key** (PEM) and note the **Client ID**.
+   permissions **Actions: Read and write** (to dispatch the workflow) and **Metadata: Read-only**
+   (mandatory). No other permissions are needed. Generate a **private key** (PEM) and note the
+   **Client ID**.
 2. **Install** the app on your fork and note the **Installation ID** (the number at the end of the
    installation settings URL).
 3. Set the repository variables `GH_APP_CLIENT_ID` and `GH_APP_INSTALLATION_ID`, and the
