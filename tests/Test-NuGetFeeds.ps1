@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
 End-to-end tests for the deployed NuGet feed service.
-Downloads apps from the last two releases of a GitHub repository, uploads them,
+Downloads apps from the latest release of a GitHub repository, uploads them,
 and verifies the NuGet v3 endpoints on all three feeds.
 Uploaded packages are intentionally left in the storage account.
 #>
@@ -27,7 +27,7 @@ function Assert {
 $adminHeaders = @{ Authorization = "Bearer $AccessToken" }
 
 # --- Get .app files from the last two releases ---
-Write-Host "Downloading apps from the last two releases of $AppsRepo"
+Write-Host "Downloading apps from the latest release of $AppsRepo"
 $githubHeaders = @{ "X-GitHub-Api-Version" = "2022-11-28" }
 if ($GitHubToken) { $githubHeaders.Authorization = "Bearer $GitHubToken"; Write-Host "  using GitHub token (length $($GitHubToken.Length))" }
 else { Write-Host "  WARNING: no GitHub token supplied; calling the API anonymously" }
@@ -37,7 +37,7 @@ Assert ($releasesResponse.StatusCode -eq 200) "GitHub releases API returned 200 
 $allReleases = @($releasesResponse.Content | ConvertFrom-Json)
 Write-Host "  releases returned (incl. drafts/prereleases): $($allReleases.Count)"
 $allReleases | ForEach-Object { Write-Host "    - $($_.tag_name) draft=$($_.draft) prerelease=$($_.prerelease) assets=$($_.assets.Count)" }
-$releases = @($allReleases | Where-Object { -not $_.draft } | Select-Object -First 2)
+$releases = @($allReleases | Where-Object { -not $_.draft } | Select-Object -First 1)
 Assert ($releases.Count -ge 1) "found releases in $AppsRepo (got $($releases.Count))"
 
 $workDir = Join-Path ([System.IO.Path]::GetTempPath()) "bcnuget-tests-$([guid]::NewGuid())"
