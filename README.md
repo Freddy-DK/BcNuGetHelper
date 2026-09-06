@@ -31,7 +31,7 @@ Each feed implements the NuGet v3 resources needed by [BcContainerHelper](https:
 
 To publish Business Central apps, use the upload endpoint (it does the `.app` → package conversion):
 
-- **Upload** — `POST api/upload` (requires a Microsoft Entra bearer token via the `Authorization: Bearer` header). Accepts a raw `.app` file body or `multipart/form-data` with one or more `.app` files (Business Central apps and their dependencies). Optional query parameters control runtime package generation for the uploaded app(s): `country` (default `w1`), `additionalCountries` (comma-separated), and `artifactType` (`sandbox` or `onprem`, default `sandbox`).
+- **Upload** — `POST api/upload` (requires a Microsoft Entra bearer token via the `Authorization: Bearer` header). Accepts a raw `.app` file body or `multipart/form-data` with one or more `.app` files (Business Central apps). Files posted under the `dependencies` form field (`.app` files or a `.zip`) are stored as the app's compilation **dependencies** — they're not published as packages, but are kept per app+version and passed to the runtime workflow so runtime packages can be (re)generated for new Business Central versions. Optional query parameters control runtime package generation for the uploaded app(s): `country` (default `w1`), `additionalCountries` (comma-separated), and `artifactType` (`sandbox` or `onprem`, default `sandbox`).
 - **Remove** — `DELETE api/packages/{appId}` (requires a Microsoft Entra bearer token) removes every package for an app id across all feeds: the full app, the symbols package, and the runtime indirect + compiled packages. Pass `*` (or `all`) to remove every package. Also available as the [`Remove Packages`](.github/workflows/remove-packages.yml) workflow (dispatch with an app id; authenticates via OIDC).
 
 Uploaded apps are processed with the [AL development tools](https://learn.microsoft.com/dynamics365/business-central/dev-itpro/developer/devenv-al-tool-package) (`altool`, bundled with the deployment): the manifest (id, name, publisher, version, dependencies) is extracted, a symbols-only package is created for the symbols feed, and everything is wrapped as NuGet packages with dependency information and stored under `{feed}/{packageId}/{version}/` in the `packages` blob container.
@@ -243,6 +243,17 @@ authenticates as a **GitHub App**. To enable runtime generation:
 When these settings are absent the upload still succeeds; only the runtime workflow dispatch is
 skipped.
 
+### Regenerating for new Business Central versions
+
+Runtime packages are per BC minor version, so new versions ship over time. The stored `.app` and
+its dependency artifact let the packages be regenerated without re-uploading. The
+[`Regenerate Runtime Packages`](.github/workflows/regenerate-runtime.yml) workflow runs weekly (and
+on demand); it authenticates via OIDC and calls `POST api/regenerate`, which re-dispatches the
+runtime workflow for the stored apps. The runtime workflow only builds versions that are missing, so
+re-running is cheap when nothing new has shipped. By default it targets the latest version of each
+app; dispatch with `allVersions: true` (or `POST api/regenerate?allVersions=true`) to cover every
+stored version.
+
 ## Local development
 
 Requirements: [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local), [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite).
@@ -289,6 +300,7 @@ Build it locally to preview:
 .github/workflows/deploy-function.yml   Function app only (manual trigger)
 .github/workflows/deploy-pages.yml      Build & publish the catalog website to GitHub Pages
 .github/workflows/generate-runtime-nuget.yml  Compile & publish runtime packages (dispatched on upload)
+.github/workflows/regenerate-runtime.yml  Re-dispatch runtime generation for new BC versions (scheduled)
 .github/workflows/remove-packages.yml   Remove packages for an app id (or all) from every feed
 .github/workflows/test.yml              End-to-end tests against the deployed service
 .github/actions/fetch-feed-tokens/      Composite action: OIDC login + short-lived feed tokens

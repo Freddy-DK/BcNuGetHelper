@@ -11,13 +11,10 @@ public class UploadFunction(
     FeedStorage storage,
     AlTool alTool,
     AdminAuthenticator admin,
-    GitHubWorkflowDispatcher runtimeWorkflow,
+    RuntimeWorkflowLauncher runtimeWorkflow,
     ILogger<UploadFunction> logger)
 {
     public record UploadedPackage(string PackageId, string Version, string[] Feeds);
-
-    // Per-upload runtime compilation options; the workflow applies its own defaults when empty.
-    private record RuntimeOptions(string Country, string AdditionalCountries, string ArtifactType);
 
     [Function("Upload")]
     public async Task<IActionResult> Run(
@@ -29,7 +26,7 @@ public class UploadFunction(
             return new UnauthorizedResult();
         }
 
-        var appFiles = await ReadAppFilesAsync(req, ct);
+        var (appFiles, dependencyFiles) = await ReadUploadAsync(req, ct);
         if (appFiles.Count == 0)
         {
             return new BadRequestObjectResult("No .app file(s) found in request body.");
@@ -68,6 +65,12 @@ public class UploadFunction(
                 var payload = feed == PackageBuilder.FeedSymbols ? symbolsFile : appFile;
                 var nupkg = PackageBuilder.Build(manifest, payload);
                 await storage.SavePackageAsync(feed, manifest.PackageId, version, nupkg, ct);
+            }
+
+            // Store the dependency artifact so runtime packages can be regenerated for future BC versions.
+            foreach (var dependency in dependencyFiles)
+            {
+                await storage.SaveDependencyAsync(manifest.PackageId, version, dependency.FileName, dependency.Content, ct);
             }
 
             try
@@ -112,25 +115,9 @@ public class UploadFunction(
 
         try
         {
-            // The workflow fetches short-lived feed tokens from the token endpoint via OIDC, so
-            // only the backend URL and (tokenless) download URLs are passed here.
+            // The workflow fetches short-lived feed tokens via OIDC, so only the backend URL is passed.
             var baseUrl = $"{req.Scheme}://{req.Host}";
-            var appUrl = AppDownloadUrl(baseUrl, manifest.PackageId, version);
-            var dependencies = await BuildDependencyUrlsAsync(baseUrl, manifest, ct);
-
-            var inputs = new Dictionary<string, string>
-            {
-                // Drives the run title and, per app+version, the workflow concurrency group.
-                ["run-name"] = $"Gen. Runtime {manifest.Id:D} {version}",
-                ["backendUrl"] = baseUrl,
-                ["apps"] = appUrl,
-                ["dependencies"] = string.Join(',', dependencies),
-                ["country"] = options.Country,
-                ["additionalCountries"] = options.AdditionalCountries,
-                ["artifactType"] = options.ArtifactType,
-            };
-
-            await runtimeWorkflow.DispatchAsync(inputs, ct);
+            await runtimeWorkflow.DispatchAsync(baseUrl, manifest.Id, manifest.PackageId, version, options, ct);
             logger.LogInformation("Dispatched runtime workflow for {PackageId} {Version}", manifest.PackageId, version);
         }
         catch (Exception ex)
@@ -139,27 +126,10 @@ public class UploadFunction(
         }
     }
 
-    private async Task<List<string>> BuildDependencyUrlsAsync(string baseUrl, AppManifest manifest, CancellationToken ct)
+    private static async Task<(List<byte[]> Apps, List<(string FileName, byte[] Content)> Dependencies)> ReadUploadAsync(HttpRequest req, CancellationToken ct)
     {
-        var urls = new List<string>();
-        foreach (var dep in manifest.Dependencies)
-        {
-            var depPackageId = new AppManifest(dep.Id, dep.Name, dep.Publisher, dep.MinVersion, "", []).PackageId;
-            var versions = await storage.GetVersionsAsync(PackageBuilder.FeedApps, depPackageId, ct);
-            if (versions.Count > 0)
-            {
-                urls.Add(AppDownloadUrl(baseUrl, depPackageId, versions[^1]));
-            }
-        }
-        return urls;
-    }
-
-    private static string AppDownloadUrl(string baseUrl, string packageId, string version) =>
-        $"{baseUrl}/api/{PackageBuilder.FeedApps}/download/{packageId}/{version}";
-
-    private static async Task<List<byte[]>> ReadAppFilesAsync(HttpRequest req, CancellationToken ct)
-    {
-        var files = new List<byte[]>();
+        var apps = new List<byte[]>();
+        var dependencies = new List<(string, byte[])>();
         if (req.HasFormContentType)
         {
             var form = await req.ReadFormAsync(ct);
@@ -167,9 +137,19 @@ public class UploadFunction(
             {
                 using var ms = new MemoryStream();
                 await file.CopyToAsync(ms, ct);
-                if (ms.Length > 0)
+                if (ms.Length == 0)
                 {
-                    files.Add(ms.ToArray());
+                    continue;
+                }
+                // Files posted under the "dependencies" field are stored for runtime compilation, not published.
+                if (file.Name.Equals("dependencies", StringComparison.OrdinalIgnoreCase))
+                {
+                    var name = string.IsNullOrEmpty(file.FileName) ? $"dependencies-{dependencies.Count}" : file.FileName;
+                    dependencies.Add((name, ms.ToArray()));
+                }
+                else
+                {
+                    apps.Add(ms.ToArray());
                 }
             }
         }
@@ -179,9 +159,9 @@ public class UploadFunction(
             await req.Body.CopyToAsync(ms, ct);
             if (ms.Length > 0)
             {
-                files.Add(ms.ToArray());
+                apps.Add(ms.ToArray());
             }
         }
-        return files;
+        return (apps, dependencies);
     }
 }

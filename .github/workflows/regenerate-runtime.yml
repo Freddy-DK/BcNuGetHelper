@@ -1,0 +1,45 @@
+name: Regenerate Runtime Packages
+
+# Periodically re-dispatches the runtime-generation workflow for stored apps so runtime packages
+# are produced for newly released Business Central versions. The workflow only builds versions that
+# are missing, so re-running is cheap when nothing new has shipped.
+
+on:
+  schedule:
+    - cron: '0 3 * * 1' # weekly, Monday 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      allVersions:
+        description: Regenerate all stored app versions (default only the latest of each app)
+        required: false
+        default: 'false'
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: regenerate-runtime
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Trigger regeneration
+        shell: pwsh
+        env:
+          BASE_NAME: ${{ vars.BASE_NAME }}
+          ALL_VERSIONS: ${{ github.event.inputs.allVersions }}
+        run: |
+          $backend = "https://$($env:BASE_NAME)-func.azurewebsites.net"
+          $all = if ($env:ALL_VERSIONS -eq 'true') { 'true' } else { 'false' }
+          $entra = az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv
+          $resp = Invoke-RestMethod -Method Post -Uri "$backend/api/regenerate?allVersions=$all" -Headers @{ Authorization = "Bearer $entra" }
+          Write-Host "Dispatched $($resp.dispatched.Count) runtime workflow run(s)"
+          $resp | ConvertTo-Json -Depth 5 | Write-Host

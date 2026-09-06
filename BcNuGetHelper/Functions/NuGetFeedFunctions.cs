@@ -295,6 +295,32 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         }
     }
 
+    [Function("DependencyDownload")]
+    public async Task<IActionResult> DependencyDownload(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{feed}/dependencies/{id}/{version}/{fileName}")] HttpRequest req,
+        string feed,
+        string id,
+        string version,
+        string fileName,
+        CancellationToken ct)
+    {
+        if (!IsValidFeed(feed))
+        {
+            return new NotFoundResult();
+        }
+        if (!await IsAuthorizedAsync(req, feed, ct))
+        {
+            return Unauthorized(req);
+        }
+
+        var stream = await storage.OpenDependencyAsync(id, version, fileName, ct);
+        if (stream is null)
+        {
+            return new NotFoundResult();
+        }
+        return new FileStreamResult(stream, "application/octet-stream") { FileDownloadName = fileName };
+    }
+
     private static async Task<(byte[] Content, string FileName)?> ExtractAppAsync(Stream nupkg, CancellationToken ct)
     {
         using var buffer = new MemoryStream();

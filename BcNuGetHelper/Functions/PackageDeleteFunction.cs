@@ -50,6 +50,7 @@ public class PackageDeleteFunction(FeedStorage storage, AdminAuthenticator admin
         await storage.DeletePackageIdsAsync(PackageBuilder.FeedSymbols, symbolsIds, ct);
         await storage.DeletePackageIdsAsync(PackageBuilder.FeedRuntime, runtimeIds, ct);
         await storage.DeleteLogosAsync(appsIds.Concat(symbolsIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), ct);
+        await storage.DeleteDependenciesAsync(appsIds.Concat(symbolsIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), ct);
 
         logger.LogInformation(
             "Deleted packages for {AppId}: apps={Apps} symbols={Symbols} runtime={Runtime}",

@@ -42,29 +42,47 @@ Assert ($releases.Count -ge 1) "found releases in $AppsRepo (got $($releases.Cou
 
 $workDir = Join-Path ([System.IO.Path]::GetTempPath()) "bcnuget-tests-$([guid]::NewGuid())"
 New-Item $workDir -ItemType Directory | Out-Null
-$appFiles = @()
+# Each entry pairs the .app files from one …-Apps-<version>.zip artifact with the matching
+# …-Dependencies-<version>.zip artifact (when present), so both are uploaded together.
+$artifacts = @()
 foreach ($release in $releases) {
     Write-Host "Release: $($release.tag_name)"
     $releaseDir = Join-Path $workDir ($release.tag_name -replace '[^\w\.-]', '_')
     New-Item $releaseDir -ItemType Directory | Out-Null
-    # Only publish the app artifacts (…-Apps-<version>.zip); ignore TestApps, Dependencies, etc.
     foreach ($asset in @($release.assets | Where-Object { $_.name -match '(?i)-Apps-\d+\.\d+\.\d+\.\d+\.zip$' })) {
-        $file = Join-Path $releaseDir $asset.name
-        Invoke-WebRequest $asset.browser_download_url -Headers $githubHeaders -OutFile $file
-        Expand-Archive $file -DestinationPath "$file-extracted"
-        $appFiles += Get-ChildItem "$file-extracted" -Recurse -Filter *.app
+        $appsFile = Join-Path $releaseDir $asset.name
+        Invoke-WebRequest $asset.browser_download_url -Headers $githubHeaders -OutFile $appsFile
+        Expand-Archive $appsFile -DestinationPath "$appsFile-extracted"
+        $apps = @(Get-ChildItem "$appsFile-extracted" -Recurse -Filter *.app)
+
+        # Matching dependencies artifact: same name with -Apps- replaced by -Dependencies-.
+        $depsName = $asset.name -replace '(?i)-Apps-', '-Dependencies-'
+        $depsAsset = $release.assets | Where-Object { $_.name -eq $depsName } | Select-Object -First 1
+        $depsFile = $null
+        if ($depsAsset) {
+            $depsFile = Join-Path $releaseDir $depsAsset.name
+            Invoke-WebRequest $depsAsset.browser_download_url -Headers $githubHeaders -OutFile $depsFile
+        }
+        $artifacts += [pscustomobject]@{ Apps = $apps; DepsZip = $depsFile }
     }
 }
-Assert ($appFiles.Count -gt 0) "found .app files in release assets (got $($appFiles.Count))"
+$totalApps = @($artifacts | ForEach-Object { $_.Apps }).Count
+Assert ($totalApps -gt 0) "found .app files in release assets (got $totalApps)"
 
-# --- Upload ---
+# --- Upload (each app artifact together with its dependencies artifact) ---
 $uploaded = @()
-foreach ($app in $appFiles) {
-    Write-Host "Uploading $($app.Name) ($([math]::Round($app.Length / 1KB, 1)) KB)"
+foreach ($artifact in $artifacts) {
+    $form = @{}
+    $i = 0
+    foreach ($app in $artifact.Apps) { $form["app$i"] = Get-Item $app.FullName; $i++ }
+    if ($artifact.DepsZip) { $form['dependencies'] = Get-Item $artifact.DepsZip }
+    $names = ($artifact.Apps | ForEach-Object { $_.Name }) -join ', '
+    $depsLabel = if ($artifact.DepsZip) { " + deps $(Split-Path $artifact.DepsZip -Leaf)" } else { "" }
+    Write-Host "Uploading $names$depsLabel"
     $response = Invoke-WebRequest -Method Post -Uri "$BaseUrl/api/upload" `
-        -Headers $adminHeaders -InFile $app.FullName -ContentType "application/octet-stream" -SkipHttpErrorCheck
+        -Headers $adminHeaders -Form $form -SkipHttpErrorCheck
     Write-Host "  POST /api/upload -> HTTP $($response.StatusCode)"
-    Assert ($response.StatusCode -eq 200) "upload of $($app.Name) succeeded (got $($response.StatusCode): $($response.Content))"
+    Assert ($response.StatusCode -eq 200) "upload of $names succeeded (got $($response.StatusCode): $($response.Content))"
     $uploaded += ($response.Content | ConvertFrom-Json).packages
 }
 $uploaded = @($uploaded | Sort-Object packageId, version -Unique)
