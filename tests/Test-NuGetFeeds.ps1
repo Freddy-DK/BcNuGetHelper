@@ -87,7 +87,9 @@ Assert ($fetched.key -eq $created.key) "fetched access key matches created key"
 $feedHeaders = @{ Authorization = "Bearer $($created.key)" }
 
 # --- Feed endpoints ---
-foreach ($feed in @("apps", "runtime", "symbols")) {
+# Runtime packages are produced asynchronously by the generate-runtime workflow, so only the
+# apps and symbols feeds hold package content right after upload; those are verified here.
+foreach ($feed in @("apps", "symbols")) {
     Write-Host "Testing feed '$feed'"
     $feedUrl = "$BaseUrl/api/$feed"
 
@@ -144,7 +146,7 @@ foreach ($feed in @("apps", "runtime", "symbols")) {
 
         $appDownload = Invoke-WebRequest "$feedUrl/download/$id/$version" -Headers $feedHeaders -SkipHttpErrorCheck
         Assert ($appDownload.StatusCode -eq 200) "direct download of $id $version returns 200 (got $($appDownload.StatusCode))"
-        Assert ($appDownload.Headers['Content-Disposition'] -match '\.app"?$') "direct download of $id serves an .app file"
+        Assert ([string]$appDownload.Headers['Content-Disposition'] -match '\.app"?$') "direct download of $id serves an .app file"
         Assert ($appDownload.RawContentLength -gt 0) "direct download of $id $version returns content"
     }
 
@@ -153,10 +155,17 @@ foreach ($feed in @("apps", "runtime", "symbols")) {
         $id = $group.Name
         $latest = Invoke-WebRequest "$feedUrl/download/$id/latest" -Headers $feedHeaders -SkipHttpErrorCheck
         Assert ($latest.StatusCode -eq 200) "direct download of $id latest returns 200 (got $($latest.StatusCode))"
-        Assert ($latest.Headers['Content-Disposition'] -match '\.app"?$') "latest download of $id serves an .app file"
+        Assert ([string]$latest.Headers['Content-Disposition'] -match '\.app"?$') "latest download of $id serves an .app file"
         Assert ($latest.RawContentLength -gt 0) "latest download of $id returns content"
     }
 }
+
+# The runtime feed is populated asynchronously by the generate-runtime workflow; verify only that
+# it is reachable and advertises the push endpoint (package content is not present on upload).
+Write-Host "Testing feed 'runtime' (metadata only)"
+$runtimeIndex = Invoke-RestMethod "$BaseUrl/api/runtime/index.json" -Headers $feedHeaders
+Assert ($runtimeIndex.version -eq "3.0.0") "runtime service index version is 3.0.0"
+Assert (@($runtimeIndex.resources | Where-Object { $_.'@type' -like "PackagePublish*" }).Count -gt 0) "runtime service index advertises PackagePublish"
 
 # Logos are extracted on upload and follow the metadata public/auth rule (or 404 when the app has none)
 foreach ($package in $uploaded) {
