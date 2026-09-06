@@ -250,10 +250,13 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
 
     [Function("AppDownload")]
     public async Task<IActionResult> AppDownload(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{feed}/download/{id}/{version}")] HttpRequest req,
+        // Optional trailing file name lets callers give the URL an .app extension (BcContainerHelper's
+        // Copy-AppFilesToFolder derives the type from the URL); it is otherwise ignored.
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{feed}/download/{id}/{version}/{fileName?}")] HttpRequest req,
         string feed,
         string id,
         string version,
+        string? fileName,
         CancellationToken ct)
     {
         if (!IsValidFeed(feed))

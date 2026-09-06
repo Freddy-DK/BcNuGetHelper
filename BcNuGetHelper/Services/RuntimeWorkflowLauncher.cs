@@ -39,6 +39,7 @@ public class RuntimeWorkflowLauncher(FeedStorage storage, GitHubWorkflowDispatch
             .ToList();
     }
 
+    // The trailing app.app gives the URL an .app extension so BcContainerHelper recognizes the download.
     private static string AppDownloadUrl(string baseUrl, string packageId, string version) =>
-        $"{baseUrl}/api/{PackageBuilder.FeedApps}/download/{packageId}/{version}";
+        $"{baseUrl}/api/{PackageBuilder.FeedApps}/download/{packageId}/{version}/app.app";
 }
