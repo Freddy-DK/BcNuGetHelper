@@ -13,6 +13,9 @@ public static class PackageBuilder
 
     public static readonly string[] Feeds = [FeedApps, FeedRuntime, FeedSymbols];
 
+    // Feeds built directly from the uploaded .app; the runtime feed is populated by the workflow.
+    public static readonly string[] DirectBuildFeeds = [FeedApps, FeedSymbols];
+
     private static readonly XNamespace NuspecNs = "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd";
 
     /// <summary>Builds a .nupkg containing the nuspec and the .app payload.</summary>

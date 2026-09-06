@@ -7,9 +7,17 @@ using Microsoft.Extensions.Logging;
 
 namespace BcNuGetHelper.Functions;
 
-public class UploadFunction(FeedStorage storage, AlTool alTool, AdminAuthenticator admin, ILogger<UploadFunction> logger)
+public class UploadFunction(
+    FeedStorage storage,
+    AlTool alTool,
+    AdminAuthenticator admin,
+    GitHubWorkflowDispatcher runtimeWorkflow,
+    ILogger<UploadFunction> logger)
 {
     public record UploadedPackage(string PackageId, string Version, string[] Feeds);
+
+    // Per-upload runtime compilation options; the workflow applies its own defaults when empty.
+    private record RuntimeOptions(string Country, string AdditionalCountries, string ArtifactType);
 
     [Function("Upload")]
     public async Task<IActionResult> Run(
@@ -26,6 +34,8 @@ public class UploadFunction(FeedStorage storage, AlTool alTool, AdminAuthenticat
         {
             return new BadRequestObjectResult("No .app file(s) found in request body.");
         }
+
+        var runtimeOptions = ReadRuntimeOptions(req);
 
         var results = new List<UploadedPackage>();
         foreach (var appFile in appFiles)
@@ -53,9 +63,8 @@ public class UploadFunction(FeedStorage storage, AlTool alTool, AdminAuthenticat
             }
 
             var version = VersionHelper.Normalize(manifest.Version);
-            foreach (var feed in PackageBuilder.Feeds)
+            foreach (var feed in PackageBuilder.DirectBuildFeeds)
             {
-                // TODO: transform the .app file to a runtime package during upload; currently the full app
                 var payload = feed == PackageBuilder.FeedSymbols ? symbolsFile : appFile;
                 var nupkg = PackageBuilder.Build(manifest, payload);
                 await storage.SavePackageAsync(feed, manifest.PackageId, version, nupkg, ct);
@@ -75,11 +84,73 @@ public class UploadFunction(FeedStorage storage, AlTool alTool, AdminAuthenticat
             }
 
             logger.LogInformation("Uploaded {PackageId} {Version} to all feeds", manifest.PackageId, version);
-            results.Add(new UploadedPackage(manifest.PackageId, version, PackageBuilder.Feeds));
+
+            // Runtime packages must be compiled per supported BC version, which only a build agent can do;
+            // hand that off to the GitHub workflow, which pushes the results back to the runtime feed.
+            await TryDispatchRuntimeWorkflowAsync(req, manifest, version, runtimeOptions, ct);
+
+            results.Add(new UploadedPackage(manifest.PackageId, version, PackageBuilder.DirectBuildFeeds));
         }
 
         return new OkObjectResult(new { packages = results });
     }
+
+    private static RuntimeOptions ReadRuntimeOptions(HttpRequest req) => new(
+        req.Query["country"].ToString(),
+        req.Query["additionalCountries"].ToString(),
+        req.Query["artifactType"].ToString());
+
+    private async Task TryDispatchRuntimeWorkflowAsync(HttpRequest req, AppManifest manifest, string version, RuntimeOptions options, CancellationToken ct)
+    {
+        if (!runtimeWorkflow.IsConfigured)
+        {
+            return;
+        }
+
+        try
+        {
+            // The workflow fetches short-lived feed tokens from the token endpoint via OIDC, so
+            // only the backend URL and (tokenless) download URLs are passed here.
+            var baseUrl = $"{req.Scheme}://{req.Host}";
+            var appUrl = AppDownloadUrl(baseUrl, manifest.PackageId, version);
+            var dependencies = await BuildDependencyUrlsAsync(baseUrl, manifest, ct);
+
+            var inputs = new Dictionary<string, string>
+            {
+                ["backendUrl"] = baseUrl,
+                ["apps"] = appUrl,
+                ["dependencies"] = string.Join(',', dependencies),
+                ["country"] = options.Country,
+                ["additionalCountries"] = options.AdditionalCountries,
+                ["artifactType"] = options.ArtifactType,
+            };
+
+            await runtimeWorkflow.DispatchAsync(inputs, ct);
+            logger.LogInformation("Dispatched runtime workflow for {PackageId} {Version}", manifest.PackageId, version);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to dispatch runtime workflow for {PackageId} {Version}", manifest.PackageId, version);
+        }
+    }
+
+    private async Task<List<string>> BuildDependencyUrlsAsync(string baseUrl, AppManifest manifest, CancellationToken ct)
+    {
+        var urls = new List<string>();
+        foreach (var dep in manifest.Dependencies)
+        {
+            var depPackageId = new AppManifest(dep.Id, dep.Name, dep.Publisher, dep.MinVersion, "", []).PackageId;
+            var versions = await storage.GetVersionsAsync(PackageBuilder.FeedApps, depPackageId, ct);
+            if (versions.Count > 0)
+            {
+                urls.Add(AppDownloadUrl(baseUrl, depPackageId, versions[^1]));
+            }
+        }
+        return urls;
+    }
+
+    private static string AppDownloadUrl(string baseUrl, string packageId, string version) =>
+        $"{baseUrl}/api/{PackageBuilder.FeedApps}/download/{packageId}/{version}";
 
     private static async Task<List<byte[]>> ReadAppFilesAsync(HttpRequest req, CancellationToken ct)
     {

@@ -88,6 +88,67 @@ public class FeedStorage(BlobServiceClient blobServiceClient)
         }
     }
 
+    /// <summary>Deletes every version of the given package ids from a feed and refreshes the cache.</summary>
+    public async Task DeletePackageIdsAsync(string feed, IReadOnlyCollection<string> packageIds, CancellationToken ct)
+    {
+        feed = feed.ToLowerInvariant();
+        if (packageIds.Count == 0)
+        {
+            return;
+        }
+        foreach (var id in packageIds)
+        {
+            await foreach (var blob in _container.GetBlobsAsync(prefix: $"{feed}/{id.ToLowerInvariant()}/", cancellationToken: ct))
+            {
+                await _container.DeleteBlobIfExistsAsync(blob.Name, cancellationToken: ct);
+            }
+        }
+
+        await _lock.WaitAsync(ct);
+        try
+        {
+            _cache[feed] = await ScanFeedAsync(feed, ct);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>Deletes the logos associated with the given package ids.</summary>
+    public async Task DeleteLogosAsync(IReadOnlyCollection<string> packageIds, CancellationToken ct)
+    {
+        foreach (var id in packageIds)
+        {
+            await foreach (var blob in _container.GetBlobsAsync(prefix: $"logos/{id.ToLowerInvariant()}/", cancellationToken: ct))
+            {
+                await _container.DeleteBlobIfExistsAsync(blob.Name, cancellationToken: ct);
+            }
+        }
+    }
+
+    /// <summary>Deletes every package (and logo) from all feeds.</summary>
+    public async Task DeleteAllAsync(CancellationToken ct)
+    {
+        await foreach (var blob in _container.GetBlobsAsync(cancellationToken: ct))
+        {
+            await _container.DeleteBlobIfExistsAsync(blob.Name, cancellationToken: ct);
+        }
+
+        await _lock.WaitAsync(ct);
+        try
+        {
+            foreach (var feed in PackageBuilder.Feeds)
+            {
+                _cache[feed] = EmptyFeed;
+            }
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> EmptyFeed =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
 

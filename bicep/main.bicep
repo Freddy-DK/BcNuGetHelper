@@ -16,6 +16,25 @@ param publicFeeds string = ''
 @description('Client (application) ID allowed to call the admin endpoints (upload, access keys) with an Entra bearer token. Empty allows any caller from the tenant with a valid token for the allowed audiences.')
 param adminClientId string = ''
 
+@description('GitHub App client ID used to dispatch the runtime-generation workflow. Empty disables runtime generation.')
+param githubAppClientId string = ''
+
+@description('Installation ID of the GitHub App on the target repository.')
+param githubAppInstallationId string = ''
+
+@description('Target repository for the runtime workflow, in owner/repo form.')
+param githubRepo string = ''
+
+@description('Workflow file name to dispatch.')
+param githubWorkflowFile string = 'generate-runtime-nuget.yml'
+
+@description('Git ref (branch) the workflow is dispatched on.')
+param githubRef string = 'main'
+
+@secure()
+@description('GitHub App private key (PEM) used to sign the workflow-dispatch token. Stored as a Function App setting.')
+param githubAppPrivateKey string = ''
+
 // Storage Blob Data Owner (not Contributor) is required by the Functions host for
 // identity-based AzureWebJobsStorage (host keys/secrets management).
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
@@ -192,6 +211,32 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'AdminAuth__AllowedClientIds'
           value: adminClientId
+        }
+        // GitHub App used to dispatch the runtime-generation workflow. The private key is
+        // held as an app setting (encrypted at rest, readable with config access to the app).
+        {
+          name: 'GitHubApp__ClientId'
+          value: githubAppClientId
+        }
+        {
+          name: 'GitHubApp__InstallationId'
+          value: githubAppInstallationId
+        }
+        {
+          name: 'GitHubApp__Repo'
+          value: githubRepo
+        }
+        {
+          name: 'GitHubApp__WorkflowFile'
+          value: githubWorkflowFile
+        }
+        {
+          name: 'GitHubApp__Ref'
+          value: githubRef
+        }
+        {
+          name: 'GitHubApp__PrivateKey'
+          value: githubAppPrivateKey
         }
       ]
     }

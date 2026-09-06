@@ -1,0 +1,65 @@
+name: Fetch feed tokens
+description: >-
+  Logs in to Azure via OIDC and requests short-lived read/read-write feed tokens from the
+  BcNuGetHelper token endpoint, exposing nuGetServerUrl/nuGetToken and tokenized app URLs
+  as environment variables for the runtime scripts.
+
+inputs:
+  backend-url:
+    description: Base URL of the BcNuGetHelper function app
+    required: true
+  apps:
+    description: Comma separated list of tokenless app download URLs
+    required: false
+    default: ''
+  dependencies:
+    description: Comma separated list of tokenless dependency download URLs
+    required: false
+    default: ''
+  client-id:
+    description: Azure client id for OIDC login
+    required: true
+  tenant-id:
+    description: Azure tenant id
+    required: true
+  subscription-id:
+    description: Azure subscription id
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Azure login
+      uses: azure/login@v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+
+    - name: Request feed tokens
+      shell: pwsh
+      env:
+        BACKEND_URL: ${{ inputs.backend-url }}
+        APPS_INPUT: ${{ inputs.apps }}
+        DEPENDENCIES_INPUT: ${{ inputs.dependencies }}
+      run: |
+        $entra = az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv
+        $backend = $env:BACKEND_URL.TrimEnd('/')
+        $resp = Invoke-RestMethod -Method Post -Uri "$backend/api/token" -Headers @{ Authorization = "Bearer $entra" }
+        Write-Host "::add-mask::$($resp.appsToken)"
+        Write-Host "::add-mask::$($resp.runtimeToken)"
+
+        function Add-Token([string] $list, [string] $token) {
+          if ([string]::IsNullOrWhiteSpace($list)) { return '' }
+          ($list.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object {
+            $u = $_.Trim()
+            if ($u.Contains('?')) { "$u&token=$token" } else { "$u`?token=$token" }
+          }) -join ','
+        }
+
+        Add-Content -Path $env:GITHUB_ENV -Encoding utf8 -Value @(
+          "nuGetServerUrl=$backend/api/runtime/index.json"
+          "nuGetToken=$($resp.runtimeToken)"
+          "apps=$(Add-Token $env:APPS_INPUT $resp.appsToken)"
+          "dependencies=$(Add-Token $env:DEPENDENCIES_INPUT $resp.appsToken)"
+        )

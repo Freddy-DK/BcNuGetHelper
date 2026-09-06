@@ -1,0 +1,45 @@
+name: Remove Packages
+
+# Removes all packages for an app id (full, symbols, and runtime indirect + compiled) from
+# every feed. Use * to remove every package. Authenticates to the function app via GitHub OIDC.
+
+on:
+  workflow_dispatch:
+    inputs:
+      appId:
+        description: App id (GUID) to remove from all feeds, or * to remove everything
+        required: true
+      backendUrl:
+        description: Function app base URL (defaults to https://<BASE_NAME>-func.azurewebsites.net)
+        required: false
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: remove-packages
+
+jobs:
+  remove:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Remove packages
+        shell: pwsh
+        env:
+          APP_ID: ${{ github.event.inputs.appId }}
+          BACKEND_URL: ${{ github.event.inputs.backendUrl }}
+          BASE_NAME: ${{ vars.BASE_NAME }}
+        run: |
+          $backend = if ($env:BACKEND_URL) { $env:BACKEND_URL.TrimEnd('/') } else { "https://$($env:BASE_NAME)-func.azurewebsites.net" }
+          $entra = az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv
+          Write-Host "Removing '$($env:APP_ID)' from $backend"
+          $resp = Invoke-RestMethod -Method Delete -Uri "$backend/api/packages/$($env:APP_ID)" -Headers @{ Authorization = "Bearer $entra" }
+          $resp | ConvertTo-Json -Depth 5 | Write-Host

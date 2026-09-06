@@ -36,6 +36,7 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
             new($"{baseUrl}/query", "SearchQueryService/3.0.0-beta"),
             new($"{baseUrl}/query", "SearchQueryService/3.0.0-rc"),
             new($"{baseUrl}/package/", "PackageBaseAddress/3.0.0"),
+            new($"{baseUrl}/api/v2/package", "PackagePublish/2.0.0"),
         ]));
     }
 
@@ -347,7 +348,7 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
             return false;
         }
         var accessKey = await accessKeys.FindByKeyAsync(token, ct);
-        return accessKey is not null && accessKey.Feeds.Contains(feed, StringComparer.OrdinalIgnoreCase);
+        return accessKey is not null && accessKey.CanRead && accessKey.Feeds.Contains(feed, StringComparer.OrdinalIgnoreCase);
     }
 
     // Metadata is public once any feed is public; a fully private deployment still requires an access key.
@@ -360,7 +361,8 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             return false;
         }
-        return await accessKeys.FindByKeyAsync(token, ct) is not null;
+        var key = await accessKeys.FindByKeyAsync(token, ct);
+        return key is not null && key.CanRead;
     }
 
     private static string? ExtractToken(HttpRequest req)

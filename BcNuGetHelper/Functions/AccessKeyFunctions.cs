@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BcNuGetHelper.Models;
 using BcNuGetHelper.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -10,7 +11,7 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public record CreateAccessKeyRequest(string[]? Feeds);
+    public record CreateAccessKeyRequest(string[]? Feeds, string? Type);
 
     [Function("GetAccessKey")]
     public async Task<IActionResult> Get(
@@ -55,8 +56,16 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin)
                 $"Body must specify \"feeds\" with any of: {string.Join(", ", PackageBuilder.Feeds)}.");
         }
 
+        // Defaults to a read-only key; write/readwrite keys are allowed to push packages.
+        var type = string.IsNullOrEmpty(request?.Type) ? AccessKeyTypes.Read : request.Type.ToLowerInvariant();
+        if (!AccessKeyTypes.All.Contains(type))
+        {
+            return new BadRequestObjectResult(
+                $"\"type\" must be one of: {string.Join(", ", AccessKeyTypes.All)}.");
+        }
+
         var normalizedFeeds = feeds.Select(f => f.ToLowerInvariant()).Distinct().ToArray();
-        var key = await store.CreateAsync(name, normalizedFeeds, ct);
+        var key = await store.CreateAsync(name, normalizedFeeds, type, ct);
         return key is null
             ? new ConflictObjectResult($"Access key '{name}' already exists.")
             : new ObjectResult(key) { StatusCode = StatusCodes.Status201Created };

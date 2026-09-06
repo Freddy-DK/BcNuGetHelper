@@ -15,7 +15,7 @@ All apps are uploaded once and served through three read-only NuGet v3 feeds:
 | Feed | Service index URL | Content |
 |------|-------------------|---------|
 | `apps` | `https://<functionapp>.azurewebsites.net/api/apps/index.json` | Full .app files |
-| `runtime` | `https://<functionapp>.azurewebsites.net/api/runtime/index.json` | Runtime packages (transformation added during upload — coming later) |
+| `runtime` | `https://<functionapp>.azurewebsites.net/api/runtime/index.json` | Runtime packages, compiled per supported Business Central version by a GitHub workflow |
 | `symbols` | `https://<functionapp>.azurewebsites.net/api/symbols/index.json` | Symbols-only packages (created with altool during upload) |
 
 Each feed implements the NuGet v3 resources needed by [BcContainerHelper](https://github.com/microsoft/navcontainerhelper)'s NuGet search functionality:
@@ -27,10 +27,12 @@ Each feed implements the NuGet v3 resources needed by [BcContainerHelper](https:
   - `GET api/{feed}/package/{id}/{version}/{id}.{version}.nupkg` (download)
 - **Direct .app download** — `GET api/{feed}/download/{id}/{version}` returns the raw `.app` for that flavor. `{version}` may be `latest`. These are stable, non-expiring URLs (anonymous for public feeds).
 - **Logo** — `GET api/logo/{id}` (or `api/logo/{id}/{version}`) returns the app logo extracted from the `.app` on upload.
+- **NuGet push** — `PUT api/{feed}/api/v2/package` stores a prebuilt `.nupkg` verbatim into the feed (standard NuGet push, requires a **write** or **readwrite** access key for that feed). This is how the runtime workflow publishes compiled packages; the upload endpoint below is the path that converts `.app` files into packages.
 
-There is no NuGet push/publish support. All uploads go through the upload endpoint:
+To publish Business Central apps, use the upload endpoint (it does the `.app` → package conversion):
 
-- **Upload** — `POST api/upload` (requires a Microsoft Entra bearer token via the `Authorization: Bearer` header). Accepts a raw `.app` file body or `multipart/form-data` with one or more `.app` files (Business Central apps and their dependencies).
+- **Upload** — `POST api/upload` (requires a Microsoft Entra bearer token via the `Authorization: Bearer` header). Accepts a raw `.app` file body or `multipart/form-data` with one or more `.app` files (Business Central apps and their dependencies). Optional query parameters control runtime package generation for the uploaded app(s): `country` (default `w1`), `additionalCountries` (comma-separated), and `artifactType` (`sandbox` or `onprem`, default `sandbox`).
+- **Remove** — `DELETE api/packages/{appId}` (requires a Microsoft Entra bearer token) removes every package for an app id across all feeds: the full app, the symbols package, and the runtime indirect + compiled packages. Pass `*` (or `all`) to remove every package. Also available as the [`Remove Packages`](.github/workflows/remove-packages.yml) workflow (dispatch with an app id; authenticates via OIDC).
 
 Uploaded apps are processed with the [AL development tools](https://learn.microsoft.com/dynamics365/business-central/dev-itpro/developer/devenv-al-tool-package) (`altool`, bundled with the deployment): the manifest (id, name, publisher, version, dependencies) is extracted, a symbols-only package is created for the symbols feed, and everything is wrapped as NuGet packages with dependency information and stored under `{feed}/{packageId}/{version}/` in the `packages` blob container.
 
@@ -44,9 +46,12 @@ Access keys are managed through Entra-protected endpoints:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET api/accesskeys/{name}` | Get an access key (name, key and feeds) |
-| `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"] }` — the feeds the key grants access to. Returns the generated key |
+| `GET api/accesskeys/{name}` | Get an access key (name, key, feeds and type) |
+| `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"], "type": "read" }` — the feeds the key grants access to and its type (`read`, `write` or `readwrite`, default `read`). Returns the generated key |
 | `DELETE api/accesskeys/{name}` | Remove an access key |
+| `POST api/token` | Issue **short-lived** feed tokens (a `read` token for `apps` and a `readwrite` token for `runtime`). Used by the runtime workflow, which authenticates with a Microsoft Entra token obtained via GitHub OIDC — so no long-lived credential is passed at dispatch |
+
+Each key has a **type**: `read` keys grant read access to their feeds, `write` keys can **push** packages (`PUT api/{feed}/api/v2/package`) to their feeds, and `readwrite` keys can do both. A `read` key can never push, so keys handed to consumers cannot publish. (The upload endpoint that converts `.app` files is separate and always requires a Microsoft Entra token.)
 
 ```powershell
 $token = az account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv
@@ -54,7 +59,7 @@ Invoke-RestMethod `
     -Method Post `
     -Uri "https://<functionapp>.azurewebsites.net/api/accesskeys/partner1" `
     -Headers @{ Authorization = "Bearer $token" } `
-    -Body '{ "feeds": ["apps", "symbols"] }' `
+    -Body '{ "feeds": ["apps", "symbols"], "type": "read" }' `
     -ContentType "application/json"
 ```
 
@@ -159,6 +164,7 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `AZURE_CLIENT_ID` | Yes | Client id of the managed identity created above (`az identity show --name github-deploy --resource-group $rg --query clientId -o tsv`) |
 | `AZURE_TENANT_ID` | Yes | Your Entra ID tenant id |
 | `AZURE_SUBSCRIPTION_ID` | Yes | The Azure subscription to deploy to |
+| `GH_APP_PRIVATE_KEY` | No | PEM private key of the GitHub App used to dispatch the runtime workflow (see [Runtime package generation](#runtime-package-generation)). Stored as a Function App setting |
 
 #### Variables
 
@@ -169,6 +175,8 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `RESOURCE_GROUP_NAME` | No | `<BASE_NAME>-rg` | Name of the resource group (must match the one created in step 2) |
 | `PUBLIC_FEEDS` | No | (empty — all feeds private) | Comma-separated list of feeds served without authentication, e.g. `apps,runtime,symbols` |
 | `ADMIN_CLIENT_ID` | No | (empty — any caller from your tenant) | Restrict the admin endpoints (upload, access keys) to a single client/application id. When empty, any valid Entra token from your tenant (for the ARM audience) is accepted |
+| `GH_APP_CLIENT_ID` | No | (empty — runtime generation disabled) | Client id of the GitHub App used to dispatch the runtime workflow |
+| `GH_APP_INSTALLATION_ID` | No | — | Installation id of that GitHub App on this repository |
 
 ### 4. Deploy
 
@@ -188,6 +196,51 @@ Run the **Deploy** workflow manually (Actions → Deploy → Run workflow). The 
 | App Service plan (Flex Consumption) | `<BASE_NAME>-plan` |
 | Function app | `<BASE_NAME>-func` |
 | Application Insights + Log Analytics | `<BASE_NAME>-ai` / `<BASE_NAME>-log` |
+
+## Runtime package generation
+
+Runtime packages contain the app compiled against a specific Business Central version, and one
+must be produced for **every supported minor version** the app targets. That compilation needs a
+Business Central container on a Windows build agent, which the function app cannot do itself.
+Instead, after an app is uploaded the function app dispatches the
+[`Generate Runtime NuGet Packages`](.github/workflows/generate-runtime-nuget.yml) workflow, which
+compiles the runtime packages (via [BcContainerHelper](https://github.com/microsoft/navcontainerhelper))
+and pushes them back to the `runtime` feed through the NuGet push endpoint.
+
+The localizations and artifact type to compile for are **per app**, passed as query parameters on
+the upload request (`country`, `additionalCountries`, `artifactType`) rather than as deployment
+settings. The set of Business Central versions is determined automatically from the app's
+application dependency (every supported minor version at or above it).
+
+The dispatch only passes the **backend URL** (and tokenless download URLs) — no feed credential.
+The workflow logs in to Azure with the existing deploy identity via **GitHub OIDC**, then calls
+`POST api/token` to obtain **short-lived** feed tokens (read for `apps`, read/write for `runtime`).
+So the credential that can push packages is never stored or passed at dispatch; it is minted per
+run and expires. Because `api/token` is an admin endpoint, set `ADMIN_CLIENT_ID` to include the
+deploy identity's client id (`AZURE_CLIENT_ID`) when you lock the deployment down, otherwise any
+caller in your tenant with a management token could request feed tokens.
+
+To dispatch a workflow securely — without a user-bound Personal Access Token — the function app
+authenticates as a **GitHub App**. To enable runtime generation:
+
+1. **Create a GitHub App** (Settings → Developer settings → GitHub Apps → New). Grant repository
+   permissions **Actions: Read and write**, **Contents: Read-only**, **Metadata: Read-only**.
+   Generate a **private key** (PEM) and note the **Client ID**.
+2. **Install** the app on your fork and note the **Installation ID** (the number at the end of the
+   installation settings URL).
+3. Set the repository variables `GH_APP_CLIENT_ID` and `GH_APP_INSTALLATION_ID`, and the
+   secret `GH_APP_PRIVATE_KEY` (see the tables above). The private key is stored as a Function App
+   setting (`GitHubApp__PrivateKey`) — encrypted at rest by Azure, but readable by anyone with
+   config-read access to the app.
+4. No extra OIDC setup is needed — the workflow reuses the deploy identity and the existing
+   `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` secrets. If you set
+   `ADMIN_CLIENT_ID` to lock the deployment down, include the deploy identity's client id
+   (`AZURE_CLIENT_ID`) in it so the workflow can call `POST api/token`.
+5. Make sure **Actions are enabled** on your fork (GitHub disables them on new forks by default),
+   otherwise the dispatched workflow won't run.
+
+When these settings are absent the upload still succeeds; only the runtime workflow dispatch is
+skipped.
 
 ## Local development
 
@@ -234,7 +287,11 @@ Build it locally to preview:
 .github/workflows/deploy.yml            Full deployment (Bicep + function app)
 .github/workflows/deploy-function.yml   Function app only (manual trigger)
 .github/workflows/deploy-pages.yml      Build & publish the catalog website to GitHub Pages
+.github/workflows/generate-runtime-nuget.yml  Compile & publish runtime packages (dispatched on upload)
+.github/workflows/remove-packages.yml   Remove packages for an app id (or all) from every feed
 .github/workflows/test.yml              End-to-end tests against the deployed service
+.github/actions/fetch-feed-tokens/      Composite action: OIDC login + short-lived feed tokens
+.github/scripts/runtime/                Runtime-package generation scripts (BcContainerHelper)
 bicep/                                  Bicep templates (bootstrap + main infrastructure)
 BcNuGetHelper/                          Azure Function app (.NET 10 isolated)
 site/                                   Static catalog website (generator + branding)

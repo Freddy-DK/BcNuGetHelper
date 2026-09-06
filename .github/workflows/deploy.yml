@@ -67,10 +67,18 @@ jobs:
                 location="$AZURE_LOCATION" \
                 publicFeeds="$PUBLIC_FEEDS" \
                 adminClientId="$ADMIN_CLIENT_ID" \
+                githubAppClientId="$GH_APP_CLIENT_ID" \
+                githubAppInstallationId="$GH_APP_INSTALLATION_ID" \
+                githubRepo="$GITHUB_REPO" \
+                githubAppPrivateKey="$GH_APP_PRIVATE_KEY" \
               --output none
         env:
           PUBLIC_FEEDS: ${{ vars.PUBLIC_FEEDS }}
           ADMIN_CLIENT_ID: ${{ vars.ADMIN_CLIENT_ID }}
+          GH_APP_CLIENT_ID: ${{ vars.GH_APP_CLIENT_ID }}
+          GH_APP_INSTALLATION_ID: ${{ vars.GH_APP_INSTALLATION_ID }}
+          GITHUB_REPO: ${{ github.repository }}
+          GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
   function:
     needs: infrastructure

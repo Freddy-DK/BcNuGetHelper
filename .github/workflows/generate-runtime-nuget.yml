@@ -1,0 +1,166 @@
+name: Generate Runtime NuGet Packages
+
+# Compiles runtime versions of the uploaded app(s) for every supported Business Central
+# minor version and pushes the resulting NuGet packages back to the runtime feed.
+# Dispatched by the BcNuGetHelper function app after an app is uploaded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      backendUrl:
+        description: Base URL of the BcNuGetHelper function app
+        required: false
+        default: ''
+      apps:
+        description: Comma separated list of app download URLs (tokenless)
+        required: false
+        default: ''
+      dependencies:
+        description: Comma separated list of dependency app download URLs
+        required: false
+        default: ''
+      country:
+        description: Country for the main runtime version (default w1)
+        required: false
+        default: ''
+      additionalCountries:
+        description: Comma separated list of additional countries
+        required: false
+        default: ''
+      artifactVersion:
+        description: Business Central artifact version range (default auto-calculate)
+        required: false
+        default: ''
+      artifactType:
+        description: Type of Business Central artifacts, onprem or sandbox (default sandbox)
+        required: false
+        default: ''
+      licenseFileUrl:
+        description: License File URL for versions before 22.0
+        required: false
+        default: ''
+      run-name:
+        description: Name of the run
+        required: false
+        default: ''
+
+run-name: ${{ github.event.inputs.run-name != '' && github.event.inputs.run-name || github.workflow }}
+
+# Required for the OIDC login that fetches short-lived feed tokens.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: ${{ github.event.inputs.run-name != '' && github.event.inputs.run-name || github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  DetermineArtifacts:
+    name: Determine Business Central Artifacts
+    runs-on: [ ubuntu-latest ]
+    outputs:
+      artifactVersions: ${{ steps.determineArtifacts.outputs.ArtifactVersions }}
+      artifactVersionCount: ${{ steps.determineArtifacts.outputs.ArtifactVersionCount }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Mask input
+        shell: pwsh
+        env:
+          secrets: ${{ toJson(secrets) }}
+        run: |
+          . (Join-Path $env:GITHUB_WORKSPACE ".github/scripts/runtime/MaskInput.ps1")
+
+      - name: Fetch feed tokens
+        uses: ./.github/actions/fetch-feed-tokens
+        with:
+          backend-url: ${{ github.event.inputs.backendUrl }}
+          apps: ${{ github.event.inputs.apps }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Determine Artifacts
+        id: determineArtifacts
+        shell: pwsh
+        env:
+          country: ${{ github.event.inputs.country }}
+          artifactVersion: ${{ github.event.inputs.artifactVersion }}
+          artifactType: ${{ github.event.inputs.artifactType }}
+        run: |
+          . (Join-Path $env:GITHUB_WORKSPACE ".github/scripts/runtime/DetermineArtifacts.ps1")
+
+  GenerateRuntimeNuGetPackages:
+    needs: [ DetermineArtifacts ]
+    if: needs.DetermineArtifacts.outputs.artifactVersionCount > 0
+    runs-on: [ windows-latest ]
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.DetermineArtifacts.outputs.artifactVersions) }}
+      fail-fast: false
+      max-parallel: 12
+    name: Runtime ${{ matrix.artifactVersion }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Mask input
+        shell: pwsh
+        env:
+          secrets: ${{ toJson(secrets) }}
+        run: |
+          . (Join-Path $env:GITHUB_WORKSPACE ".github/scripts/runtime/MaskInput.ps1")
+
+      - name: Fetch feed tokens
+        uses: ./.github/actions/fetch-feed-tokens
+        with:
+          backend-url: ${{ github.event.inputs.backendUrl }}
+          apps: ${{ github.event.inputs.apps }}
+          dependencies: ${{ github.event.inputs.dependencies }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Generate Runtime NuGet Packages
+        shell: pwsh
+        env:
+          country: ${{ github.event.inputs.country }}
+          additionalCountries: ${{ github.event.inputs.additionalCountries }}
+          artifactType: ${{ github.event.inputs.artifactType }}
+          licenseFileUrl: ${{ github.event.inputs.licenseFileUrl }}
+          artifactVersion: ${{ matrix.artifactVersion }}
+          incompatibleArtifactVersion: ${{ matrix.incompatibleArtifactVersion }}
+        run: |
+          . (Join-Path $env:GITHUB_WORKSPACE ".github/scripts/runtime/GenerateRuntimeNuGetPackages.ps1")
+
+  GenerateIndirectNuGetPackage:
+    name: Generate Indirect NuGet Package
+    needs: [ DetermineArtifacts, GenerateRuntimeNuGetPackages ]
+    if: needs.DetermineArtifacts.outputs.artifactVersionCount > 0
+    runs-on: [ ubuntu-latest ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Mask input
+        shell: pwsh
+        env:
+          secrets: ${{ toJson(secrets) }}
+        run: |
+          . (Join-Path $env:GITHUB_WORKSPACE ".github/scripts/runtime/MaskInput.ps1")
+
+      - name: Fetch feed tokens
+        uses: ./.github/actions/fetch-feed-tokens
+        with:
+          backend-url: ${{ github.event.inputs.backendUrl }}
+          apps: ${{ github.event.inputs.apps }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Generate Indirect NuGet Package
+        shell: pwsh
+        run: |
+          . (Join-Path $env:GITHUB_WORKSPACE ".github/scripts/runtime/GenerateIndirectPackage.ps1")

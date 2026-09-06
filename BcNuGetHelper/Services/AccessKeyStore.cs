@@ -40,10 +40,10 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
         (await EnsureLoadedAsync(ct)).GetValueOrDefault(name);
 
     public async Task<AccessKey?> FindByKeyAsync(string key, CancellationToken ct) =>
-        (await EnsureLoadedAsync(ct)).Values.FirstOrDefault(k => FixedTimeEquals(k.Key, key));
+        (await EnsureLoadedAsync(ct)).Values.FirstOrDefault(k => !k.IsExpired && FixedTimeEquals(k.Key, key));
 
     /// <summary>Creates a new access key. Returns null if the name is already taken.</summary>
-    public async Task<AccessKey?> CreateAsync(string name, string[] feeds, CancellationToken ct)
+    public async Task<AccessKey?> CreateAsync(string name, string[] feeds, string type, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
@@ -54,7 +54,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             {
                 return null;
             }
-            var accessKey = new AccessKey(name, GenerateKey(), feeds);
+            var accessKey = new AccessKey(name, GenerateKey(), feeds, type);
             var updated = new Dictionary<string, AccessKey>(_keys, StringComparer.OrdinalIgnoreCase)
             {
                 [name] = accessKey,
@@ -62,6 +62,49 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             await SaveAsync(updated, ct);
             _keys = updated;
             return accessKey;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Creates one or more short-lived keys in a single write, pruning expired keys and retrying
+    /// on concurrent-write conflicts (the runtime matrix requests tokens in parallel).
+    /// </summary>
+    public async Task<IReadOnlyList<AccessKey>> CreateEphemeralAsync(
+        IReadOnlyList<(string[] Feeds, string Type)> specs, TimeSpan lifetime, CancellationToken ct)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                await LoadCoreAsync(ct);
+                var updated = _keys!
+                    .Where(kvp => !kvp.Value.IsExpired)
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+                var expires = DateTimeOffset.UtcNow.Add(lifetime);
+                var created = specs
+                    .Select(spec => new AccessKey($"ephemeral-{Guid.NewGuid():N}", GenerateKey(), spec.Feeds, spec.Type, expires))
+                    .ToList();
+                foreach (var key in created)
+                {
+                    updated[key.Name] = key;
+                }
+
+                try
+                {
+                    await SaveAsync(updated, ct);
+                    _keys = updated;
+                    return created;
+                }
+                catch (RequestFailedException ex) when (ex.Status == 412 && attempt < 5)
+                {
+                    // Another instance wrote concurrently; reload the ETag and retry.
+                }
+            }
         }
         finally
         {
