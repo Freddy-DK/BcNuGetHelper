@@ -67,7 +67,8 @@ public class UploadFunction(
                 await storage.SavePackageAsync(feed, manifest.PackageId, version, nupkg, ct);
             }
 
-            // Store the dependency artifact so runtime packages can be regenerated for future BC versions.
+            // Store the dependency artifact next to the app package so runtime packages can be
+            // regenerated for future BC versions without re-uploading.
             foreach (var dependency in dependencyFiles)
             {
                 await storage.SaveDependencyAsync(manifest.PackageId, version, dependency.FileName, dependency.Content, ct);

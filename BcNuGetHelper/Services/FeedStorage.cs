@@ -251,8 +251,9 @@ public class FeedStorage(BlobServiceClient blobServiceClient)
     private static string LogoBlobPath(string packageId, string version) =>
         $"logos/{packageId.ToLowerInvariant()}/{version.ToLowerInvariant()}/logo";
 
-    // Dependency apps (the build's dependency artifact) are kept per app+version so runtime
-    // packages can be regenerated for new Business Central versions without re-uploading.
+    // Dependency apps (the build's dependency artifact) live next to the app nupkg, in a
+    // "dependencies" subfolder so the feed scan ignores them and deleting the app package removes
+    // them too. Kept per app+version so runtime packages can be regenerated for new BC versions.
     public async Task SaveDependencyAsync(string packageId, string version, string fileName, byte[] content, CancellationToken ct)
     {
         await _container.CreateIfNotExistsAsync(cancellationToken: ct);
@@ -262,7 +263,7 @@ public class FeedStorage(BlobServiceClient blobServiceClient)
 
     public async Task<IReadOnlyList<string>> ListDependencyFileNamesAsync(string packageId, string version, CancellationToken ct)
     {
-        var prefix = $"dependencies/{packageId.ToLowerInvariant()}/{version.ToLowerInvariant()}/";
+        var prefix = $"{PackageBuilder.FeedApps}/{packageId.ToLowerInvariant()}/{version.ToLowerInvariant()}/dependencies/";
         var names = new List<string>();
         try
         {
@@ -291,19 +292,8 @@ public class FeedStorage(BlobServiceClient blobServiceClient)
         }
     }
 
-    public async Task DeleteDependenciesAsync(IReadOnlyCollection<string> packageIds, CancellationToken ct)
-    {
-        foreach (var id in packageIds)
-        {
-            await foreach (var blob in _container.GetBlobsAsync(prefix: $"dependencies/{id.ToLowerInvariant()}/", cancellationToken: ct))
-            {
-                await _container.DeleteBlobIfExistsAsync(blob.Name, cancellationToken: ct);
-            }
-        }
-    }
-
     private static string DependencyPath(string packageId, string version, string fileName) =>
-        $"dependencies/{packageId.ToLowerInvariant()}/{version.ToLowerInvariant()}/{Path.GetFileName(fileName)}";
+        $"{PackageBuilder.FeedApps}/{packageId.ToLowerInvariant()}/{version.ToLowerInvariant()}/dependencies/{Path.GetFileName(fileName)}";
 }
 
 /// <summary>Scans the package blobs into memory during startup.</summary>
