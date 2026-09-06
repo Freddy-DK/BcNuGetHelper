@@ -26,6 +26,20 @@ function Assert {
 
 $adminHeaders = @{ Authorization = "Bearer $AccessToken" }
 
+# Reads the localization from the project's AL-Go settings (its "country" value), rather than
+# inferring it from the project/artifact name.
+function Get-ProjectCountry([string] $project) {
+    foreach ($path in @("$project/.AL-Go/settings.json", ".github/AL-Go-Settings.json")) {
+        try {
+            $resp = Invoke-RestMethod "https://api.github.com/repos/$AppsRepo/contents/$path" -Headers $githubHeaders
+            $settings = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($resp.content -replace '\s', ''))) | ConvertFrom-Json
+            if ($settings.country) { return "$($settings.country)" }
+        }
+        catch {}
+    }
+    return ""
+}
+
 # --- Get .app files from the latest release ---
 Write-Host "Downloading apps from the latest release of $AppsRepo"
 $githubHeaders = @{ "X-GitHub-Api-Version" = "2022-11-28" }
@@ -63,7 +77,12 @@ foreach ($release in $releases) {
             $depsFile = Join-Path $releaseDir $depsAsset.name
             Invoke-WebRequest $depsAsset.browser_download_url -Headers $githubHeaders -OutFile $depsFile
         }
-        $artifacts += [pscustomobject]@{ Apps = $apps; DepsZip = $depsFile }
+
+        # The project name (from the artifact) only locates the AL-Go settings; the country is read from it.
+        $project = $asset.name -replace '-[^-]+-Apps-\d+(\.\d+)*\.zip$', ''
+        $country = Get-ProjectCountry $project
+        Write-Host "  project '$project' -> country '$country'"
+        $artifacts += [pscustomobject]@{ Apps = $apps; DepsZip = $depsFile; Country = $country }
     }
 }
 $totalApps = @($artifacts | ForEach-Object { $_.Apps }).Count
@@ -78,8 +97,10 @@ foreach ($artifact in $artifacts) {
     if ($artifact.DepsZip) { $form['dependencies'] = Get-Item $artifact.DepsZip }
     $names = ($artifact.Apps | ForEach-Object { $_.Name }) -join ', '
     $depsLabel = if ($artifact.DepsZip) { " + deps $(Split-Path $artifact.DepsZip -Leaf)" } else { "" }
-    Write-Host "Uploading $names$depsLabel"
-    $response = Invoke-WebRequest -Method Post -Uri "$BaseUrl/api/upload" `
+    Write-Host "Uploading $names$depsLabel (country '$($artifact.Country)')"
+    $uri = "$BaseUrl/api/upload"
+    if ($artifact.Country) { $uri += "?country=$($artifact.Country)" }
+    $response = Invoke-WebRequest -Method Post -Uri $uri `
         -Headers $adminHeaders -Form $form -SkipHttpErrorCheck
     Write-Host "  POST /api/upload -> HTTP $($response.StatusCode)"
     Assert ($response.StatusCode -eq 200) "upload of $names succeeded (got $($response.StatusCode): $($response.Content))"
