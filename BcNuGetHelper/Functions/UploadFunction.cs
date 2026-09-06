@@ -120,6 +120,8 @@ public class UploadFunction(
 
             var inputs = new Dictionary<string, string>
             {
+                // Drives the run title and, per app+version, the workflow concurrency group.
+                ["run-name"] = $"Generate Runtime Packages for {manifest.Id:D} {version}",
                 ["backendUrl"] = baseUrl,
                 ["apps"] = appUrl,
                 ["dependencies"] = string.Join(',', dependencies),

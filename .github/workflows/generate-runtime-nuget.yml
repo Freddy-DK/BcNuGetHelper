@@ -40,7 +40,7 @@ on:
         required: false
         default: ''
       run-name:
-        description: Name of the run
+        description: Name of the run (the function passes "Runtime <appId> <version>")
         required: false
         default: ''
 
@@ -51,6 +51,8 @@ permissions:
   id-token: write
   contents: read
 
+# The function sets run-name to "Runtime <appId> <version>", so this scopes concurrency per
+# app+version — runs for different apps/versions don't block each other.
 concurrency:
   group: ${{ github.event.inputs.run-name != '' && github.event.inputs.run-name || github.workflow }}
   cancel-in-progress: false
