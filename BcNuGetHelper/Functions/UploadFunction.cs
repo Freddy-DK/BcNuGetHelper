@@ -104,6 +104,9 @@ public class UploadFunction(
     {
         if (!runtimeWorkflow.IsConfigured)
         {
+            logger.LogInformation(
+                "Runtime workflow not dispatched for {PackageId} {Version}: GitHub App settings (GitHubApp__ClientId/InstallationId/Repo/PrivateKey) are not all set",
+                manifest.PackageId, version);
             return;
         }
 
