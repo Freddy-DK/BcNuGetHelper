@@ -26,7 +26,7 @@ function Assert {
 
 $adminHeaders = @{ Authorization = "Bearer $AccessToken" }
 
-# --- Get .app files from the last two releases ---
+# --- Get .app files from the latest release ---
 Write-Host "Downloading apps from the latest release of $AppsRepo"
 $githubHeaders = @{ "X-GitHub-Api-Version" = "2022-11-28" }
 if ($GitHubToken) { $githubHeaders.Authorization = "Bearer $GitHubToken"; Write-Host "  using GitHub token (length $($GitHubToken.Length))" }
