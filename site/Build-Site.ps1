@@ -264,9 +264,13 @@ foreach ($app in $apps) {
     if ($publicFeedList -contains 'runtime' -and $id -match '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
         $guid = $Matches[0]
         try {
-            $runtimeIndirectId = (@((Invoke-RestMethod "$BaseUrl/api/runtime/query?q=$guid&take=100").data) | Where-Object { $_.id -match "\.runtime\.$guid$" } | Select-Object -First 1).id
+            $hits = @((Invoke-RestMethod "$BaseUrl/api/runtime/query?q=$guid&take=100").data)
+            $runtimeIndirectId = ($hits | Where-Object { $_.id -match "\.runtime\.$guid$" } | Select-Object -First 1).id
+            Write-Host "  runtime lookup for $id : $($hits.Count) hit(s), indirect=$runtimeIndirectId"
         }
-        catch {}
+        catch {
+            Write-Warning "runtime query failed for $id ($guid): $($_.Exception.Message)"
+        }
     }
 
     $rows = foreach ($v in $versionsDesc) {
@@ -282,10 +286,14 @@ foreach ($app in $apps) {
                     $rn = [xml](Invoke-RestMethod "$BaseUrl/api/runtime/package/$(Encode $runtimeIndirectId)/$(Encode $ver)/$(Encode $runtimeIndirectId).nuspec")
                     $compiledId = @($rn.package.metadata.dependencies.dependency | Where-Object { $_.id -match '\.runtime-' })[0].id
                 }
-                catch {}
+                catch {
+                    Write-Warning "runtime nuspec failed for $runtimeIndirectId $ver : $($_.Exception.Message)"
+                }
                 if (-not $compiledId) { continue }
                 $bcVersions = @()
-                try { $bcVersions = @((Invoke-RestMethod "$BaseUrl/api/runtime/package/$(Encode $compiledId)/index.json").versions) } catch {}
+                try { $bcVersions = @((Invoke-RestMethod "$BaseUrl/api/runtime/package/$(Encode $compiledId)/index.json").versions) }
+                catch { Write-Warning "runtime versions failed for $compiledId : $($_.Exception.Message)" }
+                Write-Host "  runtime $ver -> $compiledId : $($bcVersions.Count) BC version(s)"
                 if ($bcVersions.Count -eq 0) { continue }
                 $links = foreach ($bc in ($bcVersions | Sort-Object { [version]$_ })) {
                     $bcv = [version]$bc
