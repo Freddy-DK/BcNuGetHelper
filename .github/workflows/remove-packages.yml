@@ -9,10 +9,6 @@ on:
       appId:
         description: App id (GUID) to remove from all feeds, or * to remove everything
         required: true
-      backendUrl:
-        description: Function app base URL (defaults to https://<BASE_NAME>-func.azurewebsites.net)
-        required: false
-        default: ''
 
 permissions:
   id-token: write
@@ -35,10 +31,9 @@ jobs:
         shell: pwsh
         env:
           APP_ID: ${{ github.event.inputs.appId }}
-          BACKEND_URL: ${{ github.event.inputs.backendUrl }}
           BASE_NAME: ${{ vars.BASE_NAME }}
         run: |
-          $backend = if ($env:BACKEND_URL) { $env:BACKEND_URL.TrimEnd('/') } else { "https://$($env:BASE_NAME)-func.azurewebsites.net" }
+          $backend = "https://$($env:BASE_NAME)-func.azurewebsites.net"
           $entra = az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv
           Write-Host "Removing '$($env:APP_ID)' from $backend"
           $resp = Invoke-RestMethod -Method Delete -Uri "$backend/api/packages/$($env:APP_ID)" -Headers @{ Authorization = "Bearer $entra" }
