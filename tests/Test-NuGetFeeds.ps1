@@ -47,16 +47,12 @@ foreach ($release in $releases) {
     Write-Host "Release: $($release.tag_name)"
     $releaseDir = Join-Path $workDir ($release.tag_name -replace '[^\w\.-]', '_')
     New-Item $releaseDir -ItemType Directory | Out-Null
-    foreach ($asset in $release.assets) {
+    # Only publish the app artifacts (…-Apps-<version>.zip); ignore TestApps, Dependencies, etc.
+    foreach ($asset in @($release.assets | Where-Object { $_.name -match '(?i)-Apps-\d+\.\d+\.\d+\.\d+\.zip$' })) {
         $file = Join-Path $releaseDir $asset.name
         Invoke-WebRequest $asset.browser_download_url -Headers $githubHeaders -OutFile $file
-        if ($asset.name -like "*.app") {
-            $appFiles += Get-Item $file
-        }
-        elseif ($asset.name -like "*.zip") {
-            Expand-Archive $file -DestinationPath "$file-extracted"
-            $appFiles += Get-ChildItem "$file-extracted" -Recurse -Filter *.app
-        }
+        Expand-Archive $file -DestinationPath "$file-extracted"
+        $appFiles += Get-ChildItem "$file-extracted" -Recurse -Filter *.app
     }
 }
 Assert ($appFiles.Count -gt 0) "found .app files in release assets (got $($appFiles.Count))"
