@@ -257,10 +257,46 @@ foreach ($app in $apps) {
     # The apps feed returns versions ascending; newest first for display.
     $versionsDesc = @($app.versions)
     [array]::Reverse($versionsDesc)
+
+    # Locate the runtime "indirect" package by the app's GUID, so the exact BcContainerHelper-created
+    # package names are used regardless of how publisher/name are normalized.
+    $runtimeIndirectId = $null
+    if ($publicFeedList -contains 'runtime' -and $id -match '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
+        $guid = $Matches[0]
+        try {
+            $runtimeIndirectId = (@((Invoke-RestMethod "$BaseUrl/api/runtime/query?q=$guid&take=100").data) | Where-Object { $_.id -match "\.runtime\.$guid$" } | Select-Object -First 1).id
+        }
+        catch {}
+    }
+
     $rows = foreach ($v in $versionsDesc) {
         $ver = $v.version
         $groups = foreach ($feed in $allFeeds) {
-            if ($publicFeedList -contains $feed) {
+            if ($publicFeedList -notcontains $feed) { continue }
+            if ($feed -eq 'runtime') {
+                if (-not $runtimeIndirectId) { continue }
+                # The indirect package's nuspec names the compiled runtime package exactly; its
+                # versions are the supported BC versions.
+                $compiledId = $null
+                try {
+                    $rn = [xml](Invoke-RestMethod "$BaseUrl/api/runtime/package/$(Encode $runtimeIndirectId)/$(Encode $ver)/$(Encode $runtimeIndirectId).nuspec")
+                    $compiledId = @($rn.package.metadata.dependencies.dependency | Where-Object { $_.id -match '\.runtime-' })[0].id
+                }
+                catch {}
+                if (-not $compiledId) { continue }
+                $bcVersions = @()
+                try { $bcVersions = @((Invoke-RestMethod "$BaseUrl/api/runtime/package/$(Encode $compiledId)/index.json").versions) } catch {}
+                if ($bcVersions.Count -eq 0) { continue }
+                $links = foreach ($bc in ($bcVersions | Sort-Object { [version]$_ })) {
+                    $bcv = [version]$bc
+                    $label = "$($bcv.Major).$($bcv.Minor)"
+                    $appUrl = "$BaseUrl/api/runtime/download/$(Encode $compiledId)/$(Encode $bc)"
+                    $nupkgUrl = "$BaseUrl/api/runtime/package/$(Encode $compiledId)/$(Encode $bc)/$(Encode $compiledId).$(Encode $bc).nupkg"
+                    "<a class=`"btn`" href=`"$appUrl`">app $(Encode $label)</a><a class=`"btn btn-alt`" href=`"$nupkgUrl`">nupkg $(Encode $label)</a>"
+                }
+                "<span class=`"dl-group`"><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span>$($links -join '')</span>"
+            }
+            else {
                 $appUrl = "$BaseUrl/api/$feed/download/$(Encode $id)/$(Encode $ver)"
                 $nupkgUrl = "$BaseUrl/api/$feed/package/$(Encode $id)/$(Encode $ver)/$(Encode $id).$(Encode $ver).nupkg"
                 "<span class=`"dl-group`"><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span><a class=`"btn`" href=`"$appUrl`">.app</a><a class=`"btn btn-alt`" href=`"$nupkgUrl`">.nupkg</a></span>"

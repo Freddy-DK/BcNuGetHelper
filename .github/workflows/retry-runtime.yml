@@ -1,0 +1,27 @@
+name: Retry Runtime Generation
+
+# When the runtime-generation workflow finishes with failures, re-run just the failed jobs on
+# fresh runners (up to 3 attempts total). This rides out bad-runner issues such as Docker not
+# starting, which an in-process retry on the same runner can't fix.
+
+on:
+  workflow_run:
+    workflows: [ "Generate Runtime NuGet Packages" ]
+    types: [ completed ]
+
+permissions:
+  actions: write
+
+jobs:
+  rerun-failed:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt < 3 }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-run failed jobs on fresh runners
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          echo "Attempt $ATTEMPT of run $RUN_ID failed; re-running failed jobs on fresh runners."
+          gh run rerun "$RUN_ID" --failed --repo "${{ github.repository }}"

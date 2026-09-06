@@ -300,6 +300,7 @@ Build it locally to preview:
 .github/workflows/deploy-function.yml   Function app only (manual trigger)
 .github/workflows/deploy-pages.yml      Build & publish the catalog website to GitHub Pages
 .github/workflows/generate-runtime-nuget.yml  Compile & publish runtime packages (dispatched on upload)
+.github/workflows/retry-runtime.yml     Re-run failed runtime jobs on fresh runners (up to 3 attempts)
 .github/workflows/regenerate-runtime.yml  Re-dispatch runtime generation for new BC versions (scheduled)
 .github/workflows/remove-packages.yml   Remove packages for an app id (or all) from every feed
 .github/workflows/test.yml              End-to-end tests against the deployed service
