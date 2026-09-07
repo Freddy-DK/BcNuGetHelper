@@ -66,9 +66,13 @@ jobs:
           $summary = @"
           ## Token management web app
 
-          Manage NuGet feed access keys here:
+          Manage NuGet feed access keys with the app below.
 
-          **[$url]($url)**
+          **Web app URL** (copy):
+
+              $url
+
+          Or open it directly: **[$url]($url)**
 
           Scan to open on a phone:
 
