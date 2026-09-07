@@ -115,12 +115,53 @@ public class FeedStorage(BlobServiceClient blobServiceClient)
         }
     }
 
+    /// <summary>Deletes a single version of the given package ids from a feed and refreshes the cache.</summary>
+    public async Task DeletePackageVersionsAsync(string feed, IReadOnlyCollection<string> packageIds, string version, CancellationToken ct)
+    {
+        feed = feed.ToLowerInvariant();
+        if (packageIds.Count == 0)
+        {
+            return;
+        }
+        var v = version.ToLowerInvariant();
+        foreach (var id in packageIds)
+        {
+            await foreach (var blob in _container.GetBlobsAsync(prefix: $"{feed}/{id.ToLowerInvariant()}/{v}/", cancellationToken: ct))
+            {
+                await _container.DeleteBlobIfExistsAsync(blob.Name, cancellationToken: ct);
+            }
+        }
+
+        await _lock.WaitAsync(ct);
+        try
+        {
+            _cache[feed] = await ScanFeedAsync(feed, ct);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     /// <summary>Deletes the logos associated with the given package ids.</summary>
     public async Task DeleteLogosAsync(IReadOnlyCollection<string> packageIds, CancellationToken ct)
     {
         foreach (var id in packageIds)
         {
             await foreach (var blob in _container.GetBlobsAsync(prefix: $"logos/{id.ToLowerInvariant()}/", cancellationToken: ct))
+            {
+                await _container.DeleteBlobIfExistsAsync(blob.Name, cancellationToken: ct);
+            }
+        }
+    }
+
+    /// <summary>Deletes a single version's logo for the given package ids.</summary>
+    public async Task DeleteLogoVersionsAsync(IReadOnlyCollection<string> packageIds, string version, CancellationToken ct)
+    {
+        var v = version.ToLowerInvariant();
+        foreach (var id in packageIds)
+        {
+            await foreach (var blob in _container.GetBlobsAsync(prefix: $"logos/{id.ToLowerInvariant()}/{v}/", cancellationToken: ct))
             {
                 await _container.DeleteBlobIfExistsAsync(blob.Name, cancellationToken: ct);
             }

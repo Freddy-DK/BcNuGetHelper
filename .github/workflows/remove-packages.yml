@@ -9,6 +9,10 @@ on:
       appId:
         description: App id (GUID) to remove from all feeds, or * to remove everything
         required: true
+      version:
+        description: App version to remove (* = all versions of the app)
+        required: false
+        default: '*'
 
 permissions:
   id-token: write
@@ -31,10 +35,12 @@ jobs:
         shell: pwsh
         env:
           APP_ID: ${{ github.event.inputs.appId }}
+          VERSION: ${{ github.event.inputs.version }}
           BASE_NAME: ${{ vars.BASE_NAME }}
         run: |
           $backend = "https://$($env:BASE_NAME)-func.azurewebsites.net"
           $entra = az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv
-          Write-Host "Removing '$($env:APP_ID)' from $backend"
-          $resp = Invoke-RestMethod -Method Delete -Uri "$backend/api/packages/$($env:APP_ID)" -Headers @{ Authorization = "Bearer $entra" }
+          $version = if ($env:VERSION) { $env:VERSION } else { '*' }
+          Write-Host "Removing '$($env:APP_ID)' version '$version' from $backend"
+          $resp = Invoke-RestMethod -Method Delete -Uri "$backend/api/packages/$($env:APP_ID)?version=$([uri]::EscapeDataString($version))" -Headers @{ Authorization = "Bearer $entra" }
           $resp | ConvertTo-Json -Depth 5 | Write-Host
