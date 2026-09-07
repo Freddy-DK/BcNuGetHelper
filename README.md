@@ -286,6 +286,12 @@ Edit [`site/branding.json`](site/branding.json) (company name, tagline, colors, 
 - `favicon.svg` — browser icon
 - `custom.css` — appended after the generated theme, so any rule you add wins
 
+`logo` and `favicon` may also be absolute URLs (`https://…`), in which case they're used as-is instead of being loaded from `assets/`.
+
+Set `"showNupkg": false` in [`site/branding.json`](site/branding.json) to hide the `.nupkg` download buttons and show only `.app` (default is `true`).
+
+Instead of editing the file, you can set a repository **variable** named `BRANDING` to the raw branding JSON; when present it overrides [`site/branding.json`](site/branding.json). This is handy for keeping branding in repository settings rather than in the fork's source.
+
 Build it locally to preview:
 
 ```powershell

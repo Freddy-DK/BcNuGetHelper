@@ -18,6 +18,8 @@ param(
     [Parameter(Mandatory)] [string] $BaseUrl,
     [string] $OutputDir = "_site",
     [string] $BrandingPath = (Join-Path $PSScriptRoot "branding.json"),
+    # Raw branding JSON; when provided (e.g. from the BRANDING variable) it overrides BrandingPath.
+    [string] $BrandingJson = $env:BRANDING,
     [string] $PublicFeeds = ""
 )
 
@@ -44,19 +46,36 @@ $defaults = [ordered]@{
     favicon      = "logo.svg"
     footerText   = "Powered by BcNuGetHelper"
     links        = @()
+    showNupkg    = $true
 }
 $branding = $defaults
-if (Test-Path $BrandingPath) {
+# Prefer the BRANDING variable (raw JSON) over the branding.json file when it is set.
+$loaded = $null
+if (-not [string]::IsNullOrWhiteSpace($BrandingJson)) {
+    $loaded = $BrandingJson | ConvertFrom-Json
+    Write-Host "Using branding from the BRANDING variable"
+}
+elseif (Test-Path $BrandingPath) {
     $loaded = Get-Content $BrandingPath -Raw | ConvertFrom-Json
+}
+if ($loaded) {
     foreach ($key in @($branding.Keys)) {
         if ($null -ne $loaded.$key -and "$($loaded.$key)" -ne "") {
             $branding[$key] = $loaded.$key
         }
     }
 }
+# Set showNupkg=false in branding.json to hide the .nupkg download buttons.
+$showNupkg = [bool]$branding.showNupkg
 
 function Encode([object] $text) {
     return [System.Net.WebUtility]::HtmlEncode([string]$text)
+}
+
+# Absolute URLs (http(s):// or //) are used as-is; anything else is treated as a file under assets/.
+function Get-AssetUrl([string] $value, [string] $prefix) {
+    if ($value -match '^(https?:)?//') { return $value }
+    return "${prefix}assets/$value"
 }
 
 function Get-DisplayName([string] $packageId) {
@@ -78,13 +97,13 @@ function New-Page {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>$(Encode $Title)</title>
-<link rel="icon" href="${AssetPrefix}assets/$(Encode $branding.favicon)">
+<link rel="icon" href="$(Encode (Get-AssetUrl $branding.favicon $AssetPrefix))">
 <link rel="stylesheet" href="${AssetPrefix}assets/style.css">
 </head>
 <body>
 <header class="site-header">
   <a class="brand" href="${AssetPrefix}index.html">
-    <img class="brand-logo" src="${AssetPrefix}assets/$(Encode $branding.logo)" alt="">
+    <img class="brand-logo" src="$(Encode (Get-AssetUrl $branding.logo $AssetPrefix))" alt="">
     <span>
       <span class="brand-name">$(Encode $branding.companyName)</span>
       <span class="brand-tagline">$(Encode $branding.tagline)</span>
@@ -302,14 +321,16 @@ foreach ($app in $apps) {
                     $label = "$($bcv.Major).$($bcv.Minor)"
                     $appUrl = "$BaseUrl/api/runtime/download/$(Encode $compiledId)/$(Encode $bc)"
                     $nupkgUrl = "$BaseUrl/api/runtime/package/$(Encode $compiledId)/$(Encode $bc)/$(Encode $compiledId).$(Encode $bc).nupkg"
-                    "<a class=`"btn`" href=`"$appUrl`">app $(Encode $label)</a><a class=`"btn btn-alt`" href=`"$nupkgUrl`">nupkg $(Encode $label)</a>"
+                    $nupkgBtn = if ($showNupkg) { "<a class=`"btn btn-alt`" href=`"$nupkgUrl`">nupkg $(Encode $label)</a>" } else { "" }
+                    "<a class=`"btn`" href=`"$appUrl`">app $(Encode $label)</a>$nupkgBtn"
                 }
                 "<span class=`"dl-group`"><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span>$($links -join '')</span>"
             }
             else {
                 $appUrl = "$BaseUrl/api/$feed/download/$(Encode $id)/$(Encode $ver)"
                 $nupkgUrl = "$BaseUrl/api/$feed/package/$(Encode $id)/$(Encode $ver)/$(Encode $id).$(Encode $ver).nupkg"
-                "<span class=`"dl-group`"><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span><a class=`"btn`" href=`"$appUrl`">.app</a><a class=`"btn btn-alt`" href=`"$nupkgUrl`">.nupkg</a></span>"
+                $nupkgBtn = if ($showNupkg) { "<a class=`"btn btn-alt`" href=`"$nupkgUrl`">.nupkg</a>" } else { "" }
+                "<span class=`"dl-group`"><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span><a class=`"btn`" href=`"$appUrl`">.app</a>$nupkgBtn</span>"
             }
         }
         "<tr><td>$(Encode $ver)</td><td>$($groups -join '')</td></tr>"
