@@ -179,6 +179,8 @@ table.versions th { font-size: .78rem; text-transform: uppercase; letter-spacing
 .btn:hover { text-decoration: none; filter: brightness(.95); }
 .btn-alt { background: #64748b; }
 .dl-group { display: inline-flex; align-items: center; gap: .2rem; margin: .15rem .8rem .15rem 0; }
+.dl-pair { display: inline-flex; flex-direction: column; gap: .25rem; margin: .15rem .5rem .15rem 0; vertical-align: top; }
+.dl-pair .btn { margin: 0; width: 100%; text-align: center; }
 .dl-label { font-size: .78rem; color: #64748b; margin-right: .2rem; }
 .feeds { margin: 1.5rem 0; }
 .feeds h2 { font-size: 1rem; margin-bottom: .4rem; }
@@ -323,16 +325,16 @@ foreach ($app in $apps) {
                     $appUrl = "$BaseUrl/api/runtime/download/$(Encode $compiledId)/$(Encode $bc)"
                     $nupkgUrl = "$BaseUrl/api/runtime/package/$(Encode $compiledId)/$(Encode $bc)/$(Encode $compiledId).$(Encode $bc).nupkg"
                     $nupkgBtn = if ($showNupkg) { "<a class=`"btn btn-alt`" href=`"$nupkgUrl`">$(Encode $label)</a>" } else { "" }
-                    "<a class=`"btn`" href=`"$appUrl`">$(Encode $label)</a>$nupkgBtn"
+                    "<span class=`"dl-pair`"><a class=`"btn`" href=`"$appUrl`">$(Encode $label)</a>$nupkgBtn</span>"
                 }
-                "<span class=`"dl-group`">$($links -join '')</span>"
+                $links -join ''
             }
             else {
                 $label = if ($feed -eq 'apps') { 'Full App' } elseif ($feed -eq 'symbols') { 'Symbols App' } else { $feedLabels[$feed] }
                 $appUrl = "$BaseUrl/api/$feed/download/$(Encode $id)/$(Encode $ver)"
                 $nupkgUrl = "$BaseUrl/api/$feed/package/$(Encode $id)/$(Encode $ver)/$(Encode $id).$(Encode $ver).nupkg"
                 $nupkgBtn = if ($showNupkg) { "<a class=`"btn btn-alt`" href=`"$nupkgUrl`">$(Encode $label)</a>" } else { "" }
-                "<span class=`"dl-group`"><a class=`"btn`" href=`"$appUrl`">$(Encode $label)</a>$nupkgBtn</span>"
+                "<span class=`"dl-pair`"><a class=`"btn`" href=`"$appUrl`">$(Encode $label)</a>$nupkgBtn</span>"
             }
         }
         "<tr><td>$(Encode $ver)</td><td>$($groups -join '')</td></tr>"
