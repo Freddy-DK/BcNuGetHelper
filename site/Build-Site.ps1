@@ -187,6 +187,7 @@ table.versions th { font-size: .78rem; text-transform: uppercase; letter-spacing
 .feeds code { background: #eef2f7; padding: .15rem .4rem; border-radius: 4px; font-size: .85rem; }
 .feeds p { font-size: .85rem; color: #64748b; margin: .2rem 0 .6rem; }
 .feed-note { font-size: .72rem; color: #94a3b8; margin-left: .3rem; }
+.dl-note { font-size: .72rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: #94a3b8; margin-left: .4rem; }
 .copy-btn { margin-left: .4rem; padding: .1rem .5rem; font-size: .72rem; color: var(--brand-primary); background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; cursor: pointer; }
 .copy-btn:hover { border-color: var(--brand-primary); }
 .copy-btn.copied { color: #fff; background: var(--brand-accent); border-color: var(--brand-accent); }
@@ -318,19 +319,20 @@ foreach ($app in $apps) {
                 if ($bcVersions.Count -eq 0) { continue }
                 $links = foreach ($bc in ($bcVersions | Sort-Object { [version]$_ })) {
                     $bcv = [version]$bc
-                    $label = "$($bcv.Major).$($bcv.Minor)"
+                    $label = "Runtime $($bcv.Major).$($bcv.Minor)"
                     $appUrl = "$BaseUrl/api/runtime/download/$(Encode $compiledId)/$(Encode $bc)"
                     $nupkgUrl = "$BaseUrl/api/runtime/package/$(Encode $compiledId)/$(Encode $bc)/$(Encode $compiledId).$(Encode $bc).nupkg"
-                    $nupkgBtn = if ($showNupkg) { "<a class=`"btn btn-alt`" href=`"$nupkgUrl`">nupkg $(Encode $label)</a>" } else { "" }
-                    "<a class=`"btn`" href=`"$appUrl`">app $(Encode $label)</a>$nupkgBtn"
+                    $nupkgBtn = if ($showNupkg) { "<a class=`"btn btn-alt`" href=`"$nupkgUrl`">$(Encode $label)</a>" } else { "" }
+                    "<a class=`"btn`" href=`"$appUrl`">$(Encode $label)</a>$nupkgBtn"
                 }
-                "<span class=`"dl-group`"><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span>$($links -join '')</span>"
+                "<span class=`"dl-group`">$($links -join '')</span>"
             }
             else {
+                $label = if ($feed -eq 'apps') { 'Full App' } elseif ($feed -eq 'symbols') { 'Symbols App' } else { $feedLabels[$feed] }
                 $appUrl = "$BaseUrl/api/$feed/download/$(Encode $id)/$(Encode $ver)"
                 $nupkgUrl = "$BaseUrl/api/$feed/package/$(Encode $id)/$(Encode $ver)/$(Encode $id).$(Encode $ver).nupkg"
-                $nupkgBtn = if ($showNupkg) { "<a class=`"btn btn-alt`" href=`"$nupkgUrl`">.nupkg</a>" } else { "" }
-                "<span class=`"dl-group`"><span class=`"dl-label`">$(Encode $feedLabels[$feed])</span><a class=`"btn`" href=`"$appUrl`">.app</a>$nupkgBtn</span>"
+                $nupkgBtn = if ($showNupkg) { "<a class=`"btn btn-alt`" href=`"$nupkgUrl`">$(Encode $label)</a>" } else { "" }
+                "<span class=`"dl-group`"><a class=`"btn`" href=`"$appUrl`">$(Encode $label)</a>$nupkgBtn</span>"
             }
         }
         "<tr><td>$(Encode $ver)</td><td>$($groups -join '')</td></tr>"
@@ -360,7 +362,7 @@ foreach ($app in $apps) {
 $depsHtml
 $feedsHtml
 <table class="versions">
-  <thead><tr><th>Version</th><th>Download</th></tr></thead>
+  <thead><tr><th>Version</th><th>Download$(if ($showNupkg) { ' <span class="dl-note">— grey buttons are .nupkg downloads</span>' })</th></tr></thead>
   <tbody>
 $($rows -join "`n")
   </tbody>
