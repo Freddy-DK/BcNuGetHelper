@@ -35,6 +35,12 @@ param githubRef string = 'main'
 @description('GitHub App private key (PEM) used to sign the workflow-dispatch token. Stored as a Function App setting.')
 param githubAppPrivateKey string = ''
 
+@description('Comma-separated GitHub logins allowed to use the token-management web app (from the WEBAPPUSERS variable). Empty disables the web app.')
+param webAppUsers string = ''
+
+@description('GitHub OAuth App client ID used by the web app for the sign-in device flow. Empty falls back to personal-access-token sign-in only.')
+param gitHubOAuthClientId string = ''
+
 // Storage Blob Data Owner (not Contributor) is required by the Functions host for
 // identity-based AzureWebJobsStorage (host keys/secrets management).
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
@@ -237,6 +243,16 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'GitHubApp__PrivateKey'
           value: githubAppPrivateKey
+        }
+        // Token-management web app (served from /api/app). WebAppUsers is the GitHub login
+        // allow-list; GitHubOAuth__ClientId enables the browser device-flow sign-in.
+        {
+          name: 'WebAppUsers'
+          value: webAppUsers
+        }
+        {
+          name: 'GitHubOAuth__ClientId'
+          value: gitHubOAuthClientId
         }
       ]
     }

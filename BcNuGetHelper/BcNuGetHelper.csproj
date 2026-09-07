@@ -26,6 +26,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </None>
+    <!-- Token-management SPA, built into wwwroot by the deploy workflow and served from /api/app. -->
+    <None Include="wwwroot\**" Condition="Exists('wwwroot')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>wwwroot\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
   </ItemGroup>
   <!-- altool is invoked as a bundled dotnet dll (no fallback; it must be deployed with the app) -->
   <Target Name="CopyAlToolToOutput" AfterTargets="Build">

@@ -39,11 +39,27 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
     public async Task<AccessKey?> GetAsync(string name, CancellationToken ct) =>
         (await EnsureLoadedAsync(ct)).GetValueOrDefault(name);
 
+    /// <summary>Returns every access key, reloading from storage so the management UI stays fresh.</summary>
+    public async Task<IReadOnlyList<AccessKey>> ListAsync(CancellationToken ct)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await LoadCoreAsync(ct);
+            return _keys!.Values.OrderBy(k => k.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<AccessKey?> FindByKeyAsync(string key, CancellationToken ct) =>
         (await EnsureLoadedAsync(ct)).Values.FirstOrDefault(k => !k.IsExpired && FixedTimeEquals(k.Key, key));
 
     /// <summary>Creates a new access key. Returns null if the name is already taken.</summary>
-    public async Task<AccessKey?> CreateAsync(string name, string[] feeds, string type, CancellationToken ct)
+    public async Task<AccessKey?> CreateAsync(
+        string name, string[] feeds, string type, string? description, DateTimeOffset? expires, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
@@ -54,7 +70,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             {
                 return null;
             }
-            var accessKey = new AccessKey(name, GenerateKey(), feeds, type);
+            var accessKey = new AccessKey(name, GenerateKey(), feeds, type, expires, description);
             var updated = new Dictionary<string, AccessKey>(_keys, StringComparer.OrdinalIgnoreCase)
             {
                 [name] = accessKey,
@@ -62,6 +78,35 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             await SaveAsync(updated, ct);
             _keys = updated;
             return accessKey;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Sets (or clears) a key's expiry. Used to revoke (expire now) or renew (extend/clear) a key.
+    /// Returns the updated key, or null when the name does not exist.
+    /// </summary>
+    public async Task<AccessKey?> SetExpiryAsync(string name, DateTimeOffset? expires, CancellationToken ct)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await LoadCoreAsync(ct);
+            if (!_keys!.TryGetValue(name, out var existing))
+            {
+                return null;
+            }
+            var updatedKey = existing with { Expires = expires };
+            var updated = new Dictionary<string, AccessKey>(_keys, StringComparer.OrdinalIgnoreCase)
+            {
+                [name] = updatedKey,
+            };
+            await SaveAsync(updated, ct);
+            _keys = updated;
+            return updatedKey;
         }
         finally
         {

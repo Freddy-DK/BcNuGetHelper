@@ -36,6 +36,8 @@ builder.Services.AddSingleton<AccessKeyStore>();
 builder.Services.AddHostedService<AccessKeyStoreLoader>();
 builder.Services.AddSingleton<AlTool>();
 builder.Services.AddSingleton<AdminAuthenticator>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<GitHubAuthenticator>();
 builder.Services.AddSingleton<GitHubWorkflowDispatcher>();
 builder.Services.AddSingleton<RuntimeWorkflowLauncher>();
 

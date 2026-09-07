@@ -7,3 +7,9 @@ publish/
 
 # Azure Functions
 local.settings.json
+
+# Token-management SPA build output (generated into the function project at deploy time)
+BcNuGetHelper/wwwroot/
+
+# Node
+node_modules/

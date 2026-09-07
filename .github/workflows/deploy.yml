@@ -71,6 +71,8 @@ jobs:
                 githubAppInstallationId="$GH_APP_INSTALLATION_ID" \
                 githubRepo="$GITHUB_REPO" \
                 githubAppPrivateKey="$GH_APP_PRIVATE_KEY" \
+                webAppUsers="$WEBAPP_USERS" \
+                gitHubOAuthClientId="$GH_OAUTH_CLIENT_ID" \
               --output none
         env:
           PUBLIC_FEEDS: ${{ vars.PUBLIC_FEEDS }}
@@ -79,6 +81,8 @@ jobs:
           GH_APP_INSTALLATION_ID: ${{ vars.GH_APP_INSTALLATION_ID }}
           GITHUB_REPO: ${{ github.repository }}
           GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          WEBAPP_USERS: ${{ vars.WEBAPPUSERS }}
+          GH_OAUTH_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
 
   function:
     needs: infrastructure

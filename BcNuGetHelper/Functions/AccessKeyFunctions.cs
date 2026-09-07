@@ -7,11 +7,29 @@ using Microsoft.Azure.Functions.Worker;
 
 namespace BcNuGetHelper.Functions;
 
-public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin)
+public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, GitHubAuthenticator github)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public record CreateAccessKeyRequest(string[]? Feeds, string? Type);
+    public record CreateAccessKeyRequest(string[]? Feeds, string? Type, string? Description, int? ExpiresInDays);
+
+    public record RenewRequest(int? ExpiresInDays);
+
+    private async Task<bool> AuthorizedAsync(HttpRequest req, CancellationToken ct) =>
+        await admin.IsAuthorizedAsync(req, ct) || await github.IsAuthorizedAsync(req, ct);
+
+    [Function("ListAccessKeys")]
+    public async Task<IActionResult> List(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "accesskeys")] HttpRequest req,
+        CancellationToken ct)
+    {
+        if (!await AuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
+        return new OkObjectResult(await store.ListAsync(ct));
+    }
 
     [Function("GetAccessKey")]
     public async Task<IActionResult> Get(
@@ -19,7 +37,7 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin)
         string name,
         CancellationToken ct)
     {
-        if (!await admin.IsAuthorizedAsync(req, ct))
+        if (!await AuthorizedAsync(req, ct))
         {
             return new UnauthorizedResult();
         }
@@ -34,7 +52,7 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin)
         string name,
         CancellationToken ct)
     {
-        if (!await admin.IsAuthorizedAsync(req, ct))
+        if (!await AuthorizedAsync(req, ct))
         {
             return new UnauthorizedResult();
         }
@@ -64,11 +82,73 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin)
                 $"\"type\" must be one of: {string.Join(", ", AccessKeyTypes.All)}.");
         }
 
+        if (request?.ExpiresInDays is <= 0)
+        {
+            return new BadRequestObjectResult("\"expiresInDays\" must be a positive number of days.");
+        }
+        var expires = request?.ExpiresInDays is { } days
+            ? DateTimeOffset.UtcNow.AddDays(days)
+            : (DateTimeOffset?)null;
+
         var normalizedFeeds = feeds.Select(f => f.ToLowerInvariant()).Distinct().ToArray();
-        var key = await store.CreateAsync(name, normalizedFeeds, type, ct);
+        var description = string.IsNullOrWhiteSpace(request?.Description) ? null : request.Description.Trim();
+        var key = await store.CreateAsync(name, normalizedFeeds, type, description, expires, ct);
         return key is null
             ? new ConflictObjectResult($"Access key '{name}' already exists.")
             : new ObjectResult(key) { StatusCode = StatusCodes.Status201Created };
+    }
+
+    [Function("RevokeAccessKey")]
+    public async Task<IActionResult> Revoke(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "accesskeys/{name}/revoke")] HttpRequest req,
+        string name,
+        CancellationToken ct)
+    {
+        if (!await AuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
+        // Revoking expires the key immediately; the record is kept for auditing and can be renewed.
+        var key = await store.SetExpiryAsync(name, DateTimeOffset.UtcNow, ct);
+        return key is null ? new NotFoundResult() : new OkObjectResult(key);
+    }
+
+    [Function("RenewAccessKey")]
+    public async Task<IActionResult> Renew(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "accesskeys/{name}/renew")] HttpRequest req,
+        string name,
+        CancellationToken ct)
+    {
+        if (!await AuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
+        RenewRequest? request = null;
+        if (req.ContentLength is > 0)
+        {
+            try
+            {
+                request = await JsonSerializer.DeserializeAsync<RenewRequest>(req.Body, JsonOptions, ct);
+            }
+            catch (JsonException)
+            {
+                return new BadRequestObjectResult("Invalid JSON body.");
+            }
+        }
+
+        if (request?.ExpiresInDays is <= 0)
+        {
+            return new BadRequestObjectResult("\"expiresInDays\" must be a positive number of days.");
+        }
+
+        // No expiry given means the key becomes permanent again.
+        var expires = request?.ExpiresInDays is { } days
+            ? DateTimeOffset.UtcNow.AddDays(days)
+            : (DateTimeOffset?)null;
+        var key = await store.SetExpiryAsync(name, expires, ct);
+        return key is null ? new NotFoundResult() : new OkObjectResult(key);
     }
 
     [Function("DeleteAccessKey")]
@@ -77,7 +157,7 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin)
         string name,
         CancellationToken ct)
     {
-        if (!await admin.IsAuthorizedAsync(req, ct))
+        if (!await AuthorizedAsync(req, ct))
         {
             return new UnauthorizedResult();
         }

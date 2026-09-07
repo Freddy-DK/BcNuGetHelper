@@ -42,13 +42,16 @@ Each feed is either **public** (anonymous read access) or **private** (requires 
 
 Package **metadata** (service index, search, version lists, nuspec and logo) is served anonymously as soon as **at least one** feed is public \u2014 only the package/app **content** downloads (`.nupkg` files and the `api/{feed}/download/...` `.app` endpoint) remain gated per feed. If **no** feed is public, metadata also requires an access key, so a fully private deployment exposes nothing anonymously.
 
-Access keys are managed through Entra-protected endpoints:
+Access keys are managed through Entra-protected endpoints (also usable by allow-listed GitHub users via the [token management web app](#token-management-web-app)):
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET api/accesskeys/{name}` | Get an access key (name, key, feeds and type) |
-| `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"], "type": "read" }` — the feeds the key grants access to and its type (`read`, `write` or `readwrite`, default `read`). Returns the generated key |
-| `DELETE api/accesskeys/{name}` | Remove an access key |
+| `GET api/accesskeys` | List every access key |
+| `GET api/accesskeys/{name}` | Get an access key (name, key, feeds, type, description and expiry) |
+| `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"], "type": "read", "description": "who it is for", "expiresInDays": 90 }` — `type` (`read`, `write` or `readwrite`, default `read`), `description` and `expiresInDays` are optional. Returns the generated key |
+| `POST api/accesskeys/{name}/revoke` | Revoke a key (expire it immediately, keeping the record) |
+| `POST api/accesskeys/{name}/renew` | Renew a key. Optional body `{ "expiresInDays": 90 }`; omit for no expiry |
+| `DELETE api/accesskeys/{name}` | Remove an access key permanently |
 | `POST api/token` | Issue **short-lived** feed tokens (a `read` token for `apps` and a `readwrite` token for `runtime`). Used by the runtime workflow, which authenticates with a Microsoft Entra token obtained via GitHub OIDC — so no long-lived credential is passed at dispatch |
 
 Each key has a **type**: `read` keys grant read access to their feeds, `write` keys can **push** packages (`PUT api/{feed}/api/v2/package`) to their feeds, and `readwrite` keys can do both. A `read` key can never push, so keys handed to consumers cannot publish. (The upload endpoint that converts `.app` files is separate and always requires a Microsoft Entra token.)
@@ -147,6 +150,10 @@ gh variable set RESOURCE_GROUP_NAME --repo $repo --body $rg
 # gh variable set PUBLIC_FEEDS --repo $repo --body "apps,runtime,symbols"
 # Optional: restrict admin endpoints (upload, access keys) to a single client/application id
 # gh variable set ADMIN_CLIENT_ID --repo $repo --body "<client-id>"
+# Optional: GitHub logins allowed to use the token-management web app
+# gh variable set WEBAPPUSERS --repo $repo --body "octocat,another-user"
+# Optional: GitHub OAuth App client id enabling the web app's device-flow sign-in
+# gh variable set GH_OAUTH_CLIENT_ID --repo $repo --body "Ov23li..."
 ```
 
 Roles granted to the deploy identity: **Contributor** (create resources), **Role Based Access Control Administrator** (create the role assignment for the function's managed identity) and **Storage Blob Data Contributor** (function content deployment to the deployments container).
@@ -177,6 +184,8 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `ADMIN_CLIENT_ID` | No | (empty — any caller from your tenant) | Restrict the admin endpoints (upload, access keys) to a single client/application id. When empty, any valid Entra token from your tenant (for the ARM audience) is accepted |
 | `GH_APP_CLIENT_ID` | No | (empty — runtime generation disabled) | Client id of the GitHub App used to dispatch the runtime workflow |
 | `GH_APP_INSTALLATION_ID` | No | — | Installation id of that GitHub App on this repository |
+| `WEBAPPUSERS` | No | (empty — web app disabled) | Comma-separated list of GitHub logins allowed to sign in to the [token-management web app](#token-management-web-app). When empty, no one can use the web app |
+| `GH_OAUTH_CLIENT_ID` | No | (empty — token sign-in only) | Client id of a GitHub OAuth App (with device flow enabled) used for the web app's "Sign in with GitHub" button. When empty, users sign in by pasting a personal access token |
 
 ### 4. Deploy
 
@@ -196,6 +205,33 @@ Run the **Deploy** workflow manually (Actions → Deploy → Run workflow). The 
 | App Service plan (Flex Consumption) | `<BASE_NAME>-plan` |
 | Function app | `<BASE_NAME>-func` |
 | Application Insights + Log Analytics | `<BASE_NAME>-ai` / `<BASE_NAME>-log` |
+
+## Token management web app
+
+A browser-based app for managing feed access keys is served by the function app at
+`https://<BASE_NAME>-func.azurewebsites.net/api/app/`. The **Deploy Function App** workflow prints
+this link and a scannable QR code to its run summary once deployment succeeds.
+
+Sign-in uses GitHub. Access is restricted to the logins listed in the `WEBAPPUSERS` repository
+variable — everyone else is refused after signing in. Two sign-in methods are supported:
+
+- **Sign in with GitHub** (OAuth device flow) — shown when the `GH_OAUTH_CLIENT_ID` variable is set
+  to a GitHub OAuth App client id with device flow enabled. The flow is proxied through the backend
+  (`api/auth/device/code`, `api/auth/device/token`) so no client secret is needed.
+- **Personal access token** — paste a GitHub token with the `read:user` scope. Always available as a
+  fallback.
+
+Once signed in, allowed users can:
+
+- **Add** an access key with a name, a description (who/what it is for), a set of feeds
+  (`apps`, `runtime`, `symbols`, or all), an access level (`read`, `write`, `readwrite`) and an
+  optional expiry.
+- **Revoke** a key (expires it immediately but keeps the record).
+- **Renew** a revoked or expiring key (extends or clears its expiry).
+- **Remove** a key permanently.
+
+The same operations are available on the [access key endpoints](#endpoints) using a Microsoft
+Entra token, for automation.
 
 ## Runtime package generation
 
@@ -314,6 +350,7 @@ Build it locally to preview:
 .github/scripts/runtime/                Runtime-package generation scripts (BcContainerHelper)
 bicep/                                  Bicep templates (bootstrap + main infrastructure)
 BcNuGetHelper/                          Azure Function app (.NET 10 isolated)
+webapp/                                 Token-management web app (React + Vite, served at /api/app)
 site/                                   Static catalog website (generator + branding)
 tests/                                  Test scripts
 ```

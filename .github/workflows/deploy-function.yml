@@ -35,6 +35,17 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build token-management web app
+        working-directory: webapp
+        run: |
+          npm ci
+          npm run build
+
       - name: Build function app
         run: dotnet publish BcNuGetHelper -c Release -o publish
 
@@ -45,3 +56,24 @@ jobs:
           package: publish
           sku: flexconsumption
           remote-build: false
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          $url = "https://$($env:FUNCTION_APP_NAME).azurewebsites.net/api/app/"
+          $encoded = [uri]::EscapeDataString($url)
+          $qr = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=$encoded"
+          $summary = @"
+          ## Token management web app
+
+          Manage NuGet feed access keys here:
+
+          **[$url]($url)**
+
+          Scan to open on a phone:
+
+          ![QR code for the web app]($qr)
+
+          Sign-in is restricted to the GitHub logins in the **WEBAPPUSERS** repository variable.
+          "@
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
