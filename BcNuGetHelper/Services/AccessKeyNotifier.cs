@@ -15,8 +15,16 @@ public class AccessKeyNotifier(SmtpEmailSender sender, EmailTemplateProvider tem
 
     public async Task NotifyAsync(string eventName, AccessKey key, IReadOnlyDictionary<string, string>? extra, CancellationToken ct)
     {
-        if (!sender.IsConfigured || string.IsNullOrWhiteSpace(key.Email))
+        if (!sender.IsConfigured)
         {
+            logger.LogWarning(
+                "SMTP is not fully configured ({Missing}); skipping '{Event}' notification for key {Name}",
+                sender.MissingSettings(), eventName, key.Name);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(key.Email))
+        {
+            logger.LogWarning("Key {Name} has no contact e-mail; skipping '{Event}' notification", key.Name, eventName);
             return;
         }
 
@@ -34,7 +42,8 @@ public class AccessKeyNotifier(SmtpEmailSender sender, EmailTemplateProvider tem
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to send '{Event}' notification for key {Name}", eventName, key.Name);
+            logger.LogError(ex, "Failed to send '{Event}' notification for key {Name} to {Email}: {Error}",
+                eventName, key.Name, key.Email, (ex.InnerException ?? ex).Message);
         }
     }
 }

@@ -172,11 +172,7 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `AZURE_TENANT_ID` | Yes | Your Entra ID tenant id |
 | `AZURE_SUBSCRIPTION_ID` | Yes | The Azure subscription to deploy to |
 | `GH_APP_PRIVATE_KEY` | No | PEM private key of the GitHub App used to dispatch the runtime workflow (see [Runtime package generation](#runtime-package-generation)). Stored as a Function App setting |
-| `SMTP_HOST` | No | SMTP server host for access-key change [e-mail notifications](#e-mail-notifications). Notifications are sent only when all five `SMTP_*` secrets are set |
-| `SMTP_PORT` | No | SMTP port (e.g. `587` for STARTTLS) |
-| `SMTP_USERNAME` | No | SMTP username |
-| `SMTP_PASSWORD` | No | SMTP password |
-| `SMTP_FROM` | No | From address for notification e-mails (e.g. `nuget@example.com`) |
+| `SMTP_PASSWORD` | No | SMTP password for access-key change [e-mail notifications](#e-mail-notifications). The rest of the SMTP config is set as variables (below) |
 
 #### Variables
 
@@ -186,6 +182,11 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `AZURE_LOCATION` | Yes | — | Azure region to deploy to |
 | `RESOURCE_GROUP_NAME` | No | `<BASE_NAME>-rg` | Name of the resource group (must match the one created in step 2) |
 | `PUBLIC_FEEDS` | No | (empty — all feeds private) | Comma-separated list of feeds served without authentication, e.g. `apps,runtime,symbols` |
+| `SMTP_HOST` | No | (empty — notifications off) | SMTP server host for access-key change [e-mail notifications](#e-mail-notifications) |
+| `SMTP_PORT` | No | — | SMTP port (e.g. `587` for STARTTLS) |
+| `SMTP_USERNAME` | No | — | SMTP username |
+| `SMTP_FROM` | No | — | From address for notification e-mails (e.g. `nuget@example.com`) |
+| `SMTP_FROM_NAME` | No | (the `SMTP_FROM` address) | Display name shown as the e-mail sender (e.g. `Contoso`) and used for the `{{sender}}` sign-off |
 | `ADMIN_CLIENT_ID` | No | (deploy identity `AZURE_CLIENT_ID`) | Restricts the admin endpoints (upload, access keys, token, remove, regenerate) to specific client/application ids. The deploy workflow **always** locks these to the deploy identity, so only the OIDC workflow can call them. Set this variable to a comma-separated list of extra client ids to additionally allow other callers (the deploy identity stays allowed) |
 | `GH_APP_CLIENT_ID` | No | (empty — runtime generation disabled) | Client id of the GitHub App used to dispatch the runtime workflow |
 | `GH_APP_INSTALLATION_ID` | No | — | Installation id of that GitHub App on this repository |
@@ -249,8 +250,8 @@ When SMTP is configured, the service e-mails the key's contact address on key ch
 - **Deleted** — only if the key was still active. A key that was already revoked/expired doesn't send
   a second notice.
 
-Notifications are enabled only when **all five** SMTP secrets are set: `SMTP_HOST`, `SMTP_PORT`,
-`SMTP_USERNAME`, `SMTP_PASSWORD` and `SMTP_FROM` (see the secrets table). If any is missing, key
+Notifications are enabled only when all SMTP settings are configured — the `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USERNAME` and `SMTP_FROM` variables and the `SMTP_PASSWORD` secret. If any is missing, key
 changes still work but no e-mail is sent. Sending uses STARTTLS, and e-mail failures are logged
 without blocking the operation.
 
