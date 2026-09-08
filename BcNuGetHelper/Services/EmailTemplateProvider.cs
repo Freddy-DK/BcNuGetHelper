@@ -67,6 +67,7 @@ public partial class EmailTemplateProvider
         // Only customer-facing fields are exposed; the internal name and description are omitted.
         var result = template
             .Replace("{{feeds}}", V(string.Join(", ", key.Feeds)))
+            .Replace("{{feedurls}}", FeedUrls(key, extra))
             .Replace("{{type}}", V(key.Type ?? "read"))
             .Replace("{{key}}", V(key.Key))
             .Replace("{{expires}}", V(key.Expires?.ToString("u") ?? "never"))
@@ -81,6 +82,22 @@ public partial class EmailTemplateProvider
             }
         }
         return result;
+    }
+
+    // Feed name + its index.json link per feed; falls back to plain names when no base URL is given.
+    private static string FeedUrls(AccessKey key, IReadOnlyDictionary<string, string>? extra)
+    {
+        var baseUrl = extra is not null && extra.TryGetValue("baseurl", out var b) ? b?.TrimEnd('/') : null;
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            return WebUtility.HtmlEncode(string.Join(", ", key.Feeds));
+        }
+
+        return string.Join("<br>", key.Feeds.Select(feed =>
+        {
+            var url = WebUtility.HtmlEncode($"{baseUrl}/api/{feed}/index.json");
+            return $"{WebUtility.HtmlEncode(feed)} \u2014 <a href=\"{url}\">{url}</a>";
+        }));
     }
 
     // Sign-off name: the optional Smtp__FromName, falling back to the Smtp__From address.

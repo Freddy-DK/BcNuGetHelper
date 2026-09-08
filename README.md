@@ -260,7 +260,8 @@ The messages come from the [`email-templates/`](email-templates) folder — one 
 [`renewed.html`](email-templates/renewed.html), [`rotated.html`](email-templates/rotated.html),
 [`deleted.html`](email-templates/deleted.html)). Each file's subject is taken from a leading
 `<!-- subject: ... -->` comment and the rest is the HTML body. Bodies support the customer-facing
-placeholders `{{feeds}}`, `{{type}}` (access level), `{{key}}` (the access key), `{{expires}}`,
+placeholders `{{feeds}}`, `{{feedurls}}` (feed names with their `index.json` links, used in
+`created.html`/`rotated.html`), `{{type}}` (access level), `{{key}}` (the access key), `{{expires}}`,
 `{{email}}`, `{{sender}}` (the sign-off name — `Smtp__FromName` if set, otherwise the `SMTP_FROM`
 address) and, in `rotated.html`, `{{oldkeyhours}}` (grace hours the old key stays valid). Values are
 HTML-encoded, and the internal key name and description are intentionally **not** available. Customize

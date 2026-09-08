@@ -128,7 +128,8 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
             return new ConflictObjectResult($"Access key '{name}' already exists.");
         }
 
-        await notifier.NotifyAsync("created", key, ct);
+        var baseUrl = $"{req.Scheme}://{req.Host}";
+        await notifier.NotifyAsync("created", key, new Dictionary<string, string> { ["baseurl"] = baseUrl }, ct);
         return new ObjectResult(key) { StatusCode = StatusCodes.Status201Created };
     }
 
@@ -230,7 +231,12 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
             return new NotFoundResult();
         }
 
-        await notifier.NotifyAsync("rotated", key, new Dictionary<string, string> { ["oldkeyhours"] = hours.ToString() }, ct);
+        var baseUrl = $"{req.Scheme}://{req.Host}";
+        await notifier.NotifyAsync("rotated", key, new Dictionary<string, string>
+        {
+            ["oldkeyhours"] = hours.ToString(),
+            ["baseurl"] = baseUrl,
+        }, ct);
         return new OkObjectResult(key);
     }
 
