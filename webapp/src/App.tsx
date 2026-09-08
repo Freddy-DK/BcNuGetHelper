@@ -320,7 +320,7 @@ function CreateKeyForm({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [email, setEmail] = useState('');
-  const [feeds, setFeeds] = useState<string[]>([...FEEDS]);
+  const [feeds, setFeeds] = useState<string[]>([]);
   const [type, setType] = useState<AccessKeyType>('read');
   const [expiresInDays, setExpiresInDays] = useState('');
   const [busy, setBusy] = useState(false);
@@ -328,8 +328,6 @@ function CreateKeyForm({
 
   const toggleFeed = (feed: string) =>
     setFeeds((prev) => (prev.includes(feed) ? prev.filter((f) => f !== feed) : [...prev, feed]));
-
-  const allSelected = feeds.length === FEEDS.length;
 
   const submit = async () => {
     setLocalError(null);
@@ -383,7 +381,7 @@ function CreateKeyForm({
       setName('');
       setDescription('');
       setEmail('');
-      setFeeds([...FEEDS]);
+      setFeeds([]);
       setType('read');
       setExpiresInDays('');
     } catch (err) {
@@ -428,14 +426,6 @@ function CreateKeyForm({
         </label>
         <fieldset className="feeds">
           <legend>Feeds</legend>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={() => setFeeds(allSelected ? [] : [...FEEDS])}
-            />
-            All feeds
-          </label>
           {FEEDS.map((feed) => (
             <label className="check" key={feed}>
               <input type="checkbox" checked={feeds.includes(feed)} onChange={() => toggleFeed(feed)} />
