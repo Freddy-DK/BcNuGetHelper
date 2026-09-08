@@ -295,10 +295,7 @@ function Dashboard({
             <KeyList
               keys={keys}
               token={token}
-              onChanged={(key) =>
-                setKeys((prev) => prev.map((k) => (k.name === key.name ? key : k)))
-              }
-              onRemoved={(name) => setKeys((prev) => prev.filter((k) => k.name !== name))}
+              onReload={load}
               onError={(err) => handleError(err, setError, onSignOut)}
             />
           )}
@@ -396,8 +393,8 @@ function CreateKeyForm({
   };
 
   return (
-    <section className="card create">
-      <h2>New access key</h2>
+    <details className="card create">
+      <summary>New access key</summary>
       <div className="form-grid">
         <label>
           Name
@@ -468,21 +465,19 @@ function CreateKeyForm({
       <button className="btn primary" disabled={busy} onClick={submit}>
         {busy ? 'Creating…' : 'Create access key'}
       </button>
-    </section>
+    </details>
   );
 }
 
 function KeyList({
   keys,
   token,
-  onChanged,
-  onRemoved,
+  onReload,
   onError,
 }: {
   keys: AccessKey[];
   token: string;
-  onChanged: (key: AccessKey) => void;
-  onRemoved: (name: string) => void;
+  onReload: () => void | Promise<void>;
   onError: (err: unknown) => void;
 }) {
   return (
@@ -507,8 +502,7 @@ function KeyList({
               key={key.name}
               accessKey={key}
               token={token}
-              onChanged={onChanged}
-              onRemoved={onRemoved}
+              onReload={onReload}
               onError={onError}
             />
           ))}
@@ -521,14 +515,12 @@ function KeyList({
 function KeyRow({
   accessKey,
   token,
-  onChanged,
-  onRemoved,
+  onReload,
   onError,
 }: {
   accessKey: AccessKey;
   token: string;
-  onChanged: (key: AccessKey) => void;
-  onRemoved: (name: string) => void;
+  onReload: () => void | Promise<void>;
   onError: (err: unknown) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -559,7 +551,10 @@ function KeyRow({
   };
 
   const revoke = () =>
-    run(async () => onChanged(await revokeAccessKey(BACKEND_URL, token, accessKey.name)));
+    run(async () => {
+      await revokeAccessKey(BACKEND_URL, token, accessKey.name);
+      await onReload();
+    });
 
   const renew = () =>
     run(async () => {
@@ -570,14 +565,15 @@ function KeyRow({
         onError(new Error('Enter a positive whole number of days, or leave blank.'));
         return;
       }
-      onChanged(await renewAccessKey(BACKEND_URL, token, accessKey.name, days));
+      await renewAccessKey(BACKEND_URL, token, accessKey.name, days);
+      await onReload();
     });
 
   const remove = () =>
     run(async () => {
       if (!window.confirm(`Permanently remove access key "${accessKey.name}"?`)) return;
       await removeAccessKey(BACKEND_URL, token, accessKey.name);
-      onRemoved(accessKey.name);
+      await onReload();
     });
 
   return (

@@ -85,7 +85,7 @@ jobs:
 
               $url
 
-          Or open it directly: **[$url]($url)**
+          Or open it directly: <a href="$url" target="_blank" rel="noopener noreferrer"><strong>$url</strong></a>
 
           Scan to open on a phone:
 
