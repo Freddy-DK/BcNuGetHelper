@@ -72,6 +72,11 @@ jobs:
                 githubRepo="$GITHUB_REPO" \
                 githubAppPrivateKey="$GH_APP_PRIVATE_KEY" \
                 webAppUsers="$WEBAPP_USERS" \
+                smtpHost="$SMTP_HOST" \
+                smtpPort="$SMTP_PORT" \
+                smtpUser="$SMTP_USERNAME" \
+                smtpPassword="$SMTP_PASSWORD" \
+                smtpFrom="$SMTP_FROM" \
               --output none
         env:
           PUBLIC_FEEDS: ${{ vars.PUBLIC_FEEDS }}
@@ -83,6 +88,11 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
           GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
           WEBAPP_USERS: ${{ vars.WEBAPPUSERS }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
 
   function:
     needs: infrastructure

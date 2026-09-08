@@ -100,6 +100,18 @@ export function renewAccessKey(
   });
 }
 
+export function rotateAccessKey(
+  backendUrl: string,
+  token: string,
+  name: string,
+  oldKeyValidHours: number,
+): Promise<AccessKey> {
+  return request<AccessKey>(backendUrl, token, `accesskeys/${encodeURIComponent(name)}/rotate`, {
+    method: 'POST',
+    body: JSON.stringify({ oldKeyValidHours }),
+  });
+}
+
 export function removeAccessKey(backendUrl: string, token: string, name: string): Promise<void> {
   return request<void>(backendUrl, token, `accesskeys/${encodeURIComponent(name)}`, {
     method: 'DELETE',

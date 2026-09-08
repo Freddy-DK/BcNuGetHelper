@@ -9,6 +9,7 @@ import {
   renewAccessKey,
   resolveBackendUrl,
   revokeAccessKey,
+  rotateAccessKey,
 } from './api';
 import {
   clearToken,
@@ -569,6 +570,22 @@ function KeyRow({
       await onReload();
     });
 
+  const rotate = () =>
+    run(async () => {
+      const input = window.prompt(
+        'Rotate this key: issue a new key now and keep the current one valid for a grace period.\nHow many hours should the current key stay valid?',
+        '24',
+      );
+      if (input === null) return;
+      const hours = Number(input);
+      if (!Number.isInteger(hours) || hours <= 0) {
+        onError(new Error('Enter a positive whole number of hours.'));
+        return;
+      }
+      await rotateAccessKey(BACKEND_URL, token, accessKey.name, hours);
+      await onReload();
+    });
+
   const remove = () =>
     run(async () => {
       if (!window.confirm(`Permanently remove access key "${accessKey.name}"?`)) return;
@@ -607,9 +624,14 @@ function KeyRow({
             Renew
           </button>
         ) : (
-          <button className="btn tiny warn" onClick={revoke} disabled={busy}>
-            Revoke
-          </button>
+          <>
+            <button className="btn tiny" onClick={rotate} disabled={busy}>
+              Renew
+            </button>
+            <button className="btn tiny warn" onClick={revoke} disabled={busy}>
+              Revoke
+            </button>
+          </>
         )}
         <button className="btn tiny danger" onClick={remove} disabled={busy}>
           Remove

@@ -51,6 +51,7 @@ Access keys are managed through Entra-protected endpoints (also usable by allow-
 | `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"], "type": "read", "description": "who it is for", "email": "notify@example.com", "expiresInDays": 90 }`. `email` is **required** (used to notify when the key changes); `type` (`read`, `write` or `readwrite`, default `read`), `description` and `expiresInDays` are optional. The name is at most 64 characters (letters, digits, `.`, `-`, `_`), description at most 200 and e-mail at most 200. Returns the generated key |
 | `POST api/accesskeys/{name}/revoke` | Revoke a key (expire it immediately, keeping the record) |
 | `POST api/accesskeys/{name}/renew` | Renew a key. Optional body `{ "expiresInDays": 90 }`; omit for no expiry |
+| `POST api/accesskeys/{name}/rotate` | Rotate a key: issue a new active key under the same name and keep the previous key value valid for a grace period. Body `{ "oldKeyValidHours": 24 }` |
 | `DELETE api/accesskeys/{name}` | Remove an access key permanently |
 | `POST api/token` | Issue **short-lived** feed tokens (a `read` token for `apps` and a `readwrite` token for `runtime`). Used by the runtime workflow, which authenticates with a Microsoft Entra token obtained via GitHub OIDC — so no long-lived credential is passed at dispatch |
 
@@ -171,6 +172,11 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `AZURE_TENANT_ID` | Yes | Your Entra ID tenant id |
 | `AZURE_SUBSCRIPTION_ID` | Yes | The Azure subscription to deploy to |
 | `GH_APP_PRIVATE_KEY` | No | PEM private key of the GitHub App used to dispatch the runtime workflow (see [Runtime package generation](#runtime-package-generation)). Stored as a Function App setting |
+| `SMTP_HOST` | No | SMTP server host for access-key change [e-mail notifications](#e-mail-notifications). Notifications are sent only when all five `SMTP_*` secrets are set |
+| `SMTP_PORT` | No | SMTP port (e.g. `587` for STARTTLS) |
+| `SMTP_USERNAME` | No | SMTP username |
+| `SMTP_PASSWORD` | No | SMTP password |
+| `SMTP_FROM` | No | From address for notification e-mails (e.g. `nuget@example.com`) |
 
 #### Variables
 
@@ -226,11 +232,38 @@ Once signed in, allowed users can:
   key changes), a description (who/what it is for), a set of feeds (`apps`, `runtime`, `symbols`, or
   all), an access level (`read`, `write`, `readwrite`) and an optional expiry.
 - **Revoke** a key (expires it immediately but keeps the record).
-- **Renew** a revoked or expiring key (extends or clears its expiry).
+- **Renew** a key. For a revoked or expiring key this extends (or clears) its expiry. For an **active**
+  key it **rotates** the key: a new key value is issued immediately and the previous value keeps
+  working for a grace period you choose (in hours), so consumers can switch over without downtime.
 - **Remove** a key permanently.
 
 The same operations are available on the [access key endpoints](#endpoints) using a Microsoft
 Entra token, for automation.
+
+### E-mail notifications
+
+When SMTP is configured, the service e-mails the key's contact address on key changes:
+
+- **Created**, **Revoked** and **Renewed** — always.
+- **Rotated** — when an active key is renewed/rotated; the e-mail states how long the old key stays valid.
+- **Deleted** — only if the key was still active. A key that was already revoked/expired doesn't send
+  a second notice.
+
+Notifications are enabled only when **all five** SMTP secrets are set: `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USERNAME`, `SMTP_PASSWORD` and `SMTP_FROM` (see the secrets table). If any is missing, key
+changes still work but no e-mail is sent. Sending uses STARTTLS, and e-mail failures are logged
+without blocking the operation.
+
+The messages come from the [`email-templates/`](email-templates) folder — one HTML file per event
+([`created.html`](email-templates/created.html), [`revoked.html`](email-templates/revoked.html),
+[`renewed.html`](email-templates/renewed.html), [`rotated.html`](email-templates/rotated.html),
+[`deleted.html`](email-templates/deleted.html)). Each file's subject is taken from a leading
+`<!-- subject: ... -->` comment and the rest is the HTML body. Bodies support the customer-facing
+placeholders `{{feeds}}`, `{{type}}` (access level), `{{key}}` (the access key), `{{expires}}`,
+`{{email}}`, `{{sender}}` (the sign-off name — `Smtp__FromName` if set, otherwise the `SMTP_FROM`
+address) and, in `rotated.html`, `{{oldkeyhours}}` (grace hours the old key stays valid). Values are
+HTML-encoded, and the internal key name and description are intentionally **not** available. Customize
+the notifications by editing these files in your fork.
 
 ## Runtime package generation
 
@@ -365,6 +398,7 @@ Build it locally to preview:
 bicep/                                  Bicep templates (bootstrap + main infrastructure)
 BcNuGetHelper/                          Azure Function app (.NET 10 isolated)
 webapp/                                 Token-management web app (React + Vite, served at /api/app)
+email-templates/                        Notification e-mail templates (one HTML file per event)
 site/                                   Static catalog website (generator + branding)
 tests/                                  Test scripts
 ```

@@ -115,6 +115,47 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
     }
 
     /// <summary>
+    /// Rotates a key: issues a fresh active key under the same name and keeps the previous key value
+    /// alive for a grace period under a hidden <c>ephemeral-{name}</c> entry that expires after
+    /// <paramref name="oldKeyLifetime"/>. Returns the new key, or null when the name does not exist.
+    /// </summary>
+    public async Task<AccessKey?> RotateAsync(string name, TimeSpan oldKeyLifetime, CancellationToken ct)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await LoadCoreAsync(ct);
+            if (!_keys!.TryGetValue(name, out var existing))
+            {
+                return null;
+            }
+
+            var updated = WithoutExpiredEphemeral(_keys.Values);
+
+            // Preserve the old key value under a hidden ephemeral name for the grace period.
+            var graceName = $"{EphemeralPrefix}{name}";
+            if (updated.ContainsKey(graceName))
+            {
+                graceName = $"{EphemeralPrefix}{name}-{Guid.NewGuid():N}";
+            }
+            var graceKey = existing with { Name = graceName, Expires = DateTimeOffset.UtcNow.Add(oldKeyLifetime) };
+
+            // Issue a fresh active key under the original name, inheriting the old key's expiry.
+            var newKey = existing with { Key = GenerateKey() };
+
+            updated[newKey.Name] = newKey;
+            updated[graceKey.Name] = graceKey;
+            await SaveAsync(updated, ct);
+            _keys = updated;
+            return newKey;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
     /// Creates one or more short-lived keys in a single write, pruning expired keys and retrying
     /// on concurrent-write conflicts (the runtime matrix requests tokens in parallel).
     /// </summary>

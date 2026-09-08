@@ -7,7 +7,7 @@ using Microsoft.Azure.Functions.Worker;
 
 namespace BcNuGetHelper.Functions;
 
-public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, GitHubAuthenticator github)
+public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, GitHubAuthenticator github, AccessKeyNotifier notifier)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -20,6 +20,8 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
     public record CreateAccessKeyRequest(string[]? Feeds, string? Type, string? Description, string? Email, int? ExpiresInDays);
 
     public record RenewRequest(int? ExpiresInDays);
+
+    public record RotateRequest(int? OldKeyValidHours);
 
     private async Task<bool> AuthorizedAsync(HttpRequest req, CancellationToken ct) =>
         await admin.IsAuthorizedAsync(req, ct) || await github.IsAuthorizedAsync(req, ct);
@@ -121,9 +123,13 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
 
         var normalizedFeeds = feeds.Select(f => f.ToLowerInvariant()).Distinct().ToArray();
         var key = await store.CreateAsync(name, normalizedFeeds, type, description, email, expires, ct);
-        return key is null
-            ? new ConflictObjectResult($"Access key '{name}' already exists.")
-            : new ObjectResult(key) { StatusCode = StatusCodes.Status201Created };
+        if (key is null)
+        {
+            return new ConflictObjectResult($"Access key '{name}' already exists.");
+        }
+
+        await notifier.NotifyAsync("created", key, ct);
+        return new ObjectResult(key) { StatusCode = StatusCodes.Status201Created };
     }
 
     [Function("RevokeAccessKey")]
@@ -139,7 +145,13 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
 
         // Revoking expires the key immediately; the record is kept for auditing and can be renewed.
         var key = await store.SetExpiryAsync(name, DateTimeOffset.UtcNow, ct);
-        return key is null ? new NotFoundResult() : new OkObjectResult(key);
+        if (key is null)
+        {
+            return new NotFoundResult();
+        }
+
+        await notifier.NotifyAsync("revoked", key, ct);
+        return new OkObjectResult(key);
     }
 
     [Function("RenewAccessKey")]
@@ -176,7 +188,50 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
             ? DateTimeOffset.UtcNow.AddDays(days)
             : (DateTimeOffset?)null;
         var key = await store.SetExpiryAsync(name, expires, ct);
-        return key is null ? new NotFoundResult() : new OkObjectResult(key);
+        if (key is null)
+        {
+            return new NotFoundResult();
+        }
+
+        await notifier.NotifyAsync("renewed", key, ct);
+        return new OkObjectResult(key);
+    }
+
+    [Function("RotateAccessKey")]
+    public async Task<IActionResult> Rotate(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "accesskeys/{name}/rotate")] HttpRequest req,
+        string name,
+        CancellationToken ct)
+    {
+        if (!await AuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
+        RotateRequest? request;
+        try
+        {
+            request = await JsonSerializer.DeserializeAsync<RotateRequest>(req.Body, JsonOptions, ct);
+        }
+        catch (JsonException)
+        {
+            return new BadRequestObjectResult("Invalid JSON body.");
+        }
+
+        if (request?.OldKeyValidHours is not { } hours || hours <= 0)
+        {
+            return new BadRequestObjectResult("\"oldKeyValidHours\" must be a positive number of hours.");
+        }
+
+        // Issues a new active key and keeps the old key value valid for the grace period.
+        var key = await store.RotateAsync(name, TimeSpan.FromHours(hours), ct);
+        if (key is null)
+        {
+            return new NotFoundResult();
+        }
+
+        await notifier.NotifyAsync("rotated", key, new Dictionary<string, string> { ["oldkeyhours"] = hours.ToString() }, ct);
+        return new OkObjectResult(key);
     }
 
     [Function("DeleteAccessKey")]
@@ -190,7 +245,19 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
             return new UnauthorizedResult();
         }
 
-        return await store.RemoveAsync(name, ct) ? new NoContentResult() : new NotFoundResult();
+        var existing = await store.GetAsync(name, ct);
+        if (!await store.RemoveAsync(name, ct))
+        {
+            return new NotFoundResult();
+        }
+
+        // Notify only if the key was still active; a revoked/expired key already sent its notice.
+        if (existing is not null && !existing.IsExpired)
+        {
+            await notifier.NotifyAsync("deleted", existing, ct);
+        }
+
+        return new NoContentResult();
     }
 
     private static bool IsValidEmail(string email) =>

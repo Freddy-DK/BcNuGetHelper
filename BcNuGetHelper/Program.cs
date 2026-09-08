@@ -40,5 +40,8 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<GitHubAuthenticator>();
 builder.Services.AddSingleton<GitHubWorkflowDispatcher>();
 builder.Services.AddSingleton<RuntimeWorkflowLauncher>();
+builder.Services.AddSingleton<SmtpEmailSender>();
+builder.Services.AddSingleton<EmailTemplateProvider>();
+builder.Services.AddSingleton<AccessKeyNotifier>();
 
 builder.Build().Run();

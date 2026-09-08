@@ -32,6 +32,12 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Link>wwwroot\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </None>
+    <!-- Notification e-mail templates (one HTML file per event), served from disk at runtime. -->
+    <None Include="..\email-templates\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>email-templates\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
   </ItemGroup>
   <!-- altool is invoked as a bundled dotnet dll (no fallback; it must be deployed with the app) -->
   <Target Name="CopyAlToolToOutput" AfterTargets="Build">

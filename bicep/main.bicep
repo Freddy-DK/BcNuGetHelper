@@ -38,6 +38,22 @@ param githubAppPrivateKey string = ''
 @description('Comma-separated GitHub logins allowed to use the token-management web app (from the WEBAPPUSERS variable). Empty disables the web app.')
 param webAppUsers string = ''
 
+@description('SMTP host for access-key change notifications. Notifications are sent only when all SMTP settings are provided.')
+param smtpHost string = ''
+
+@description('SMTP port (e.g. 587 for STARTTLS).')
+param smtpPort string = ''
+
+@description('SMTP username.')
+param smtpUser string = ''
+
+@secure()
+@description('SMTP password.')
+param smtpPassword string = ''
+
+@description('From address for notification e-mails.')
+param smtpFrom string = ''
+
 // Storage Blob Data Owner (not Contributor) is required by the Functions host for
 // identity-based AzureWebJobsStorage (host keys/secrets management).
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
@@ -246,6 +262,27 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'WebAppUsers'
           value: webAppUsers
+        }
+        // SMTP notifications for access-key changes. Sent only when all SMTP settings are present.
+        {
+          name: 'Smtp__Host'
+          value: smtpHost
+        }
+        {
+          name: 'Smtp__Port'
+          value: smtpPort
+        }
+        {
+          name: 'Smtp__User'
+          value: smtpUser
+        }
+        {
+          name: 'Smtp__Password'
+          value: smtpPassword
+        }
+        {
+          name: 'Smtp__From'
+          value: smtpFrom
         }
       ]
     }
