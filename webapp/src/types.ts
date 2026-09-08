@@ -7,6 +7,7 @@ export interface AccessKey {
   type: string | null;
   expires: string | null;
   description: string | null;
+  email: string | null;
 }
 
 export interface MeResponse {
@@ -37,5 +38,12 @@ export interface CreateKeyInput {
   feeds: string[];
   type: AccessKeyType;
   description: string;
+  email: string;
   expiresInDays: number | null;
 }
+
+export const LIMITS = {
+  name: 64,
+  description: 200,
+  email: 200,
+} as const;

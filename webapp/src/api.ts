@@ -76,6 +76,7 @@ export function createAccessKey(
       feeds: input.feeds,
       type: input.type,
       description: input.description,
+      email: input.email,
       expiresInDays: input.expiresInDays,
     }),
   });

@@ -72,17 +72,17 @@ jobs:
                 githubRepo="$GITHUB_REPO" \
                 githubAppPrivateKey="$GH_APP_PRIVATE_KEY" \
                 webAppUsers="$WEBAPP_USERS" \
-                gitHubOAuthClientId="$GH_OAUTH_CLIENT_ID" \
               --output none
         env:
           PUBLIC_FEEDS: ${{ vars.PUBLIC_FEEDS }}
-          ADMIN_CLIENT_ID: ${{ vars.ADMIN_CLIENT_ID }}
+          # Admin endpoints are always locked to the deploy identity (the OIDC workflow). Setting the
+          # ADMIN_CLIENT_ID variable appends extra allowed client ids rather than replacing it.
+          ADMIN_CLIENT_ID: ${{ vars.ADMIN_CLIENT_ID && format('{0},{1}', secrets.AZURE_CLIENT_ID, vars.ADMIN_CLIENT_ID) || secrets.AZURE_CLIENT_ID }}
           GH_APP_CLIENT_ID: ${{ vars.GH_APP_CLIENT_ID }}
           GH_APP_INSTALLATION_ID: ${{ vars.GH_APP_INSTALLATION_ID }}
           GITHUB_REPO: ${{ github.repository }}
           GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
           WEBAPP_USERS: ${{ vars.WEBAPPUSERS }}
-          GH_OAUTH_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
 
   function:
     needs: infrastructure

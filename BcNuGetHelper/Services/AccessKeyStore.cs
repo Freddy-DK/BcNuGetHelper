@@ -16,6 +16,7 @@ namespace BcNuGetHelper.Services;
 public class AccessKeyStore(BlobServiceClient blobServiceClient)
 {
     private const string BlobName = "accesskeys.json";
+    private const string EphemeralPrefix = "ephemeral-";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly BlobContainerClient _container = blobServiceClient.GetBlobContainerClient("config");
@@ -39,14 +40,17 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
     public async Task<AccessKey?> GetAsync(string name, CancellationToken ct) =>
         (await EnsureLoadedAsync(ct)).GetValueOrDefault(name);
 
-    /// <summary>Returns every access key, reloading from storage so the management UI stays fresh.</summary>
+    /// <summary>Returns the named access keys, reloading from storage so the management UI stays fresh. Short-lived ephemeral keys (issued by the token endpoint) are never shown.</summary>
     public async Task<IReadOnlyList<AccessKey>> ListAsync(CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
         {
             await LoadCoreAsync(ct);
-            return _keys!.Values.OrderBy(k => k.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            return _keys!.Values
+                .Where(k => !IsEphemeral(k.Name))
+                .OrderBy(k => k.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
         finally
         {
@@ -59,7 +63,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
 
     /// <summary>Creates a new access key. Returns null if the name is already taken.</summary>
     public async Task<AccessKey?> CreateAsync(
-        string name, string[] feeds, string type, string? description, DateTimeOffset? expires, CancellationToken ct)
+        string name, string[] feeds, string type, string? description, string email, DateTimeOffset? expires, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
@@ -70,11 +74,9 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             {
                 return null;
             }
-            var accessKey = new AccessKey(name, GenerateKey(), feeds, type, expires, description);
-            var updated = new Dictionary<string, AccessKey>(_keys, StringComparer.OrdinalIgnoreCase)
-            {
-                [name] = accessKey,
-            };
+            var accessKey = new AccessKey(name, GenerateKey(), feeds, type, expires, description, email);
+            var updated = WithoutExpiredEphemeral(_keys!.Values);
+            updated[name] = accessKey;
             await SaveAsync(updated, ct);
             _keys = updated;
             return accessKey;
@@ -100,10 +102,8 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
                 return null;
             }
             var updatedKey = existing with { Expires = expires };
-            var updated = new Dictionary<string, AccessKey>(_keys, StringComparer.OrdinalIgnoreCase)
-            {
-                [name] = updatedKey,
-            };
+            var updated = WithoutExpiredEphemeral(_keys!.Values);
+            updated[name] = updatedKey;
             await SaveAsync(updated, ct);
             _keys = updated;
             return updatedKey;
@@ -127,9 +127,8 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             for (var attempt = 0; ; attempt++)
             {
                 await LoadCoreAsync(ct);
-                var updated = _keys!
-                    .Where(kvp => !kvp.Value.IsExpired)
-                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+                // Prune only expired ephemeral keys; revoked named keys are kept for auditing.
+                var updated = WithoutExpiredEphemeral(_keys!.Values);
                 var expires = DateTimeOffset.UtcNow.Add(lifetime);
                 var created = specs
                     .Select(spec => new AccessKey($"ephemeral-{Guid.NewGuid():N}", GenerateKey(), spec.Feeds, spec.Type, expires))
@@ -167,7 +166,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             {
                 return false;
             }
-            var updated = new Dictionary<string, AccessKey>(_keys, StringComparer.OrdinalIgnoreCase);
+            var updated = WithoutExpiredEphemeral(_keys.Values);
             updated.Remove(name);
             await SaveAsync(updated, ct);
             _keys = updated;
@@ -220,6 +219,14 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
         var response = await _container.GetBlobClient(BlobName).UploadAsync(data, options, ct);
         _etag = response.Value.ETag;
     }
+
+    private static bool IsEphemeral(string name) =>
+        name.StartsWith(EphemeralPrefix, StringComparison.OrdinalIgnoreCase);
+
+    // Drops expired ephemeral (token-endpoint) keys so they don't accumulate; keeps everything else.
+    private static Dictionary<string, AccessKey> WithoutExpiredEphemeral(IEnumerable<AccessKey> keys) =>
+        keys.Where(k => !(IsEphemeral(k.Name) && k.IsExpired))
+            .ToDictionary(k => k.Name, StringComparer.OrdinalIgnoreCase);
 
     private static string GenerateKey() =>
         Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));

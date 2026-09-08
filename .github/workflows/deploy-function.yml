@@ -59,10 +59,23 @@ jobs:
 
       - name: Deployment summary
         if: success()
+        env:
+          WEBAPP_USERS: ${{ vars.WEBAPPUSERS }}
         run: |
           $url = "https://$($env:FUNCTION_APP_NAME).azurewebsites.net/api/app/"
           $encoded = [uri]::EscapeDataString($url)
           $qr = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=$encoded"
+
+          $logins = @()
+          if ($env:WEBAPP_USERS) {
+            $logins = $env:WEBAPP_USERS -split '[,; ]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          }
+          if ($logins.Count -gt 0) {
+            $usersMd = ($logins | ForEach-Object { "- $_" }) -join "`n"
+          } else {
+            $usersMd = "_No logins configured yet — the web app is disabled until the WEBAPPUSERS variable is set._"
+          }
+
           $summary = @"
           ## Token management web app
 
@@ -78,6 +91,10 @@ jobs:
 
           ![QR code for the web app]($qr)
 
-          Sign-in is restricted to the GitHub logins in the **WEBAPPUSERS** repository variable.
+          ### Who can sign in
+
+          $usersMd
+
+          To change who has access, edit the **WEBAPPUSERS** repository variable (Settings -> Secrets and variables -> Actions) and re-run the **Deploy** workflow.
           "@
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

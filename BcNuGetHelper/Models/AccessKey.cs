@@ -7,7 +7,8 @@ public record AccessKey(
     string[] Feeds,
     string? Type = null,
     DateTimeOffset? Expires = null,
-    string? Description = null)
+    string? Description = null,
+    string? Email = null)
 {
     /// <summary>True when the key may read its feeds (type "read" or "readwrite"; the default when unset).</summary>
     public bool CanRead =>

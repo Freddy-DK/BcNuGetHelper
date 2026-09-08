@@ -20,7 +20,7 @@ import {
   type DeviceFlowCodes,
 } from './auth';
 import type { AccessKey, AccessKeyType, MeResponse } from './types';
-import { FEEDS } from './types';
+import { FEEDS, LIMITS } from './types';
 
 const BACKEND_URL = resolveBackendUrl();
 
@@ -321,6 +321,7 @@ function CreateKeyForm({
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [email, setEmail] = useState('');
   const [feeds, setFeeds] = useState<string[]>([...FEEDS]);
   const [type, setType] = useState<AccessKeyType>('read');
   const [expiresInDays, setExpiresInDays] = useState('');
@@ -339,8 +340,25 @@ function CreateKeyForm({
       setLocalError('Name is required.');
       return;
     }
+    if (!/^[A-Za-z0-9._-]+$/.test(trimmed) || trimmed.length > LIMITS.name) {
+      setLocalError(`Name must be at most ${LIMITS.name} characters using letters, digits, '.', '-' or '_'.`);
+      return;
+    }
     if (existingNames.includes(trimmed.toLowerCase())) {
       setLocalError('An access key with that name already exists.');
+      return;
+    }
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setLocalError('E-mail is required (used to notify when the key changes).');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail) || trimmedEmail.length > LIMITS.email) {
+      setLocalError('Enter a valid e-mail address.');
+      return;
+    }
+    if (description.trim().length > LIMITS.description) {
+      setLocalError(`Description must be at most ${LIMITS.description} characters.`);
       return;
     }
     if (feeds.length === 0) {
@@ -360,11 +378,13 @@ function CreateKeyForm({
         feeds,
         type,
         description: description.trim(),
+        email: trimmedEmail,
         expiresInDays: days,
       });
       onCreated(key);
       setName('');
       setDescription('');
+      setEmail('');
       setFeeds([...FEEDS]);
       setType('read');
       setExpiresInDays('');
@@ -381,7 +401,23 @@ function CreateKeyForm({
       <div className="form-grid">
         <label>
           Name
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="acme-ci" />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="acme-ci"
+            maxLength={LIMITS.name}
+          />
+        </label>
+        <label>
+          E-mail
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="notify@example.com"
+            maxLength={LIMITS.email}
+            required
+          />
         </label>
         <label>
           Description
@@ -389,6 +425,7 @@ function CreateKeyForm({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Who or what this key is for"
+            maxLength={LIMITS.description}
           />
         </label>
         <fieldset className="feeds">
@@ -455,6 +492,7 @@ function KeyList({
           <tr>
             <th>Name</th>
             <th>Description</th>
+            <th>E-mail</th>
             <th>Feeds</th>
             <th>Access</th>
             <th>Status</th>
@@ -546,6 +584,7 @@ function KeyRow({
     <tr className={inactive ? 'inactive' : ''}>
       <td className="mono">{accessKey.name}</td>
       <td>{accessKey.description ?? <span className="muted">—</span>}</td>
+      <td>{accessKey.email ?? <span className="muted">—</span>}</td>
       <td>
         {accessKey.feeds.map((f) => (
           <span className="badge" key={f}>

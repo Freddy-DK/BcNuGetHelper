@@ -28,15 +28,14 @@ public class WebAppFunctions(GitHubAuthenticator github)
         [".woff2"] = "font/woff2",
     };
 
-    /// <summary>Public configuration the SPA needs before sign-in (the OAuth client id is not a secret).</summary>
+    /// <summary>Public configuration the SPA needs before sign-in (the client id is not a secret).</summary>
     [Function("WebAppConfig")]
     public IActionResult Config(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "config")] HttpRequest req)
     {
-        return new OkObjectResult(new
-        {
-            clientId = Environment.GetEnvironmentVariable("GitHubOAuth__ClientId") ?? "",
-        });
+        // The web app signs in with the same GitHub App used for workflow dispatch.
+        var clientId = Environment.GetEnvironmentVariable("GitHubApp__ClientId");
+        return new OkObjectResult(new { clientId = clientId ?? "" });
     }
 
     /// <summary>Reports the signed-in GitHub user and whether they are allow-listed for the app.</summary>
