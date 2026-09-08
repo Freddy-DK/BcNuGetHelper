@@ -47,8 +47,8 @@ Access keys are managed through Entra-protected endpoints (also usable by allow-
 | Endpoint | Description |
 |----------|-------------|
 | `GET api/accesskeys` | List every access key |
-| `GET api/accesskeys/{name}` | Get an access key (name, key, feeds, type, description and expiry) |
-| `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"], "type": "read", "description": "who it is for", "expiresInDays": 90 }` — `type` (`read`, `write` or `readwrite`, default `read`), `description` and `expiresInDays` are optional. Returns the generated key |
+| `GET api/accesskeys/{name}` | Get an access key (name, key, feeds, type, description, e-mail and expiry) |
+| `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"], "type": "read", "description": "who it is for", "email": "notify@example.com", "expiresInDays": 90 }`. `email` is **required** (used to notify when the key changes); `type` (`read`, `write` or `readwrite`, default `read`), `description` and `expiresInDays` are optional. The name is at most 64 characters (letters, digits, `.`, `-`, `_`), description at most 200 and e-mail at most 200. Returns the generated key |
 | `POST api/accesskeys/{name}/revoke` | Revoke a key (expire it immediately, keeping the record) |
 | `POST api/accesskeys/{name}/renew` | Renew a key. Optional body `{ "expiresInDays": 90 }`; omit for no expiry |
 | `DELETE api/accesskeys/{name}` | Remove an access key permanently |
@@ -148,12 +148,11 @@ gh variable set AZURE_LOCATION --repo $repo --body $location
 gh variable set RESOURCE_GROUP_NAME --repo $repo --body $rg
 # Optional: feeds served without authentication
 # gh variable set PUBLIC_FEEDS --repo $repo --body "apps,runtime,symbols"
-# Optional: restrict admin endpoints (upload, access keys) to a single client/application id
+# Optional: also allow extra client/application ids to call the admin endpoints
+# (the deploy identity is always allowed; this appends to the allow-list)
 # gh variable set ADMIN_CLIENT_ID --repo $repo --body "<client-id>"
 # Optional: GitHub logins allowed to use the token-management web app
 # gh variable set WEBAPPUSERS --repo $repo --body "octocat,another-user"
-# Optional: GitHub OAuth App client id enabling the web app's device-flow sign-in
-# gh variable set GH_OAUTH_CLIENT_ID --repo $repo --body "Ov23li..."
 ```
 
 Roles granted to the deploy identity: **Contributor** (create resources), **Role Based Access Control Administrator** (create the role assignment for the function's managed identity) and **Storage Blob Data Contributor** (function content deployment to the deployments container).
@@ -181,11 +180,10 @@ All settings are configured as repository **secrets** and **variables** (Setting
 | `AZURE_LOCATION` | Yes | — | Azure region to deploy to |
 | `RESOURCE_GROUP_NAME` | No | `<BASE_NAME>-rg` | Name of the resource group (must match the one created in step 2) |
 | `PUBLIC_FEEDS` | No | (empty — all feeds private) | Comma-separated list of feeds served without authentication, e.g. `apps,runtime,symbols` |
-| `ADMIN_CLIENT_ID` | No | (empty — any caller from your tenant) | Restrict the admin endpoints (upload, access keys) to a single client/application id. When empty, any valid Entra token from your tenant (for the ARM audience) is accepted |
+| `ADMIN_CLIENT_ID` | No | (deploy identity `AZURE_CLIENT_ID`) | Restricts the admin endpoints (upload, access keys, token, remove, regenerate) to specific client/application ids. The deploy workflow **always** locks these to the deploy identity, so only the OIDC workflow can call them. Set this variable to a comma-separated list of extra client ids to additionally allow other callers (the deploy identity stays allowed) |
 | `GH_APP_CLIENT_ID` | No | (empty — runtime generation disabled) | Client id of the GitHub App used to dispatch the runtime workflow |
 | `GH_APP_INSTALLATION_ID` | No | — | Installation id of that GitHub App on this repository |
 | `WEBAPPUSERS` | No | (empty — web app disabled) | Comma-separated list of GitHub logins allowed to sign in to the [token-management web app](#token-management-web-app). When empty, no one can use the web app |
-| `GH_OAUTH_CLIENT_ID` | No | (empty — token sign-in only) | Client id of a GitHub OAuth App (with device flow enabled) used for the web app's "Sign in with GitHub" button. When empty, users sign in by pasting a personal access token |
 
 ### 4. Deploy
 
@@ -215,17 +213,18 @@ this link and a scannable QR code to its run summary once deployment succeeds.
 Sign-in uses GitHub. Access is restricted to the logins listed in the `WEBAPPUSERS` repository
 variable — everyone else is refused after signing in. Two sign-in methods are supported:
 
-- **Sign in with GitHub** (OAuth device flow) — shown when the `GH_OAUTH_CLIENT_ID` variable is set
-  to a GitHub OAuth App client id with device flow enabled. The flow is proxied through the backend
+- **Sign in with GitHub** (device flow) — available when the runtime GitHub App is configured
+  (`GH_APP_CLIENT_ID`) with **Device Flow** enabled (see [Runtime package generation](#runtime-package-generation)).
+  The web app reuses that app's client id; the flow is proxied through the backend
   (`api/auth/device/code`, `api/auth/device/token`) so no client secret is needed.
 - **Personal access token** — paste a GitHub token with the `read:user` scope. Always available as a
   fallback.
 
 Once signed in, allowed users can:
 
-- **Add** an access key with a name, a description (who/what it is for), a set of feeds
-  (`apps`, `runtime`, `symbols`, or all), an access level (`read`, `write`, `readwrite`) and an
-  optional expiry.
+- **Add** an access key with a name, a required contact e-mail (used to notify the recipient when the
+  key changes), a description (who/what it is for), a set of feeds (`apps`, `runtime`, `symbols`, or
+  all), an access level (`read`, `write`, `readwrite`) and an optional expiry.
 - **Revoke** a key (expires it immediately but keeps the record).
 - **Renew** a revoked or expiring key (extends or clears its expiry).
 - **Remove** a key permanently.
@@ -252,9 +251,10 @@ The dispatch only passes the **backend URL** (and tokenless download URLs) — n
 The workflow logs in to Azure with the existing deploy identity via **GitHub OIDC**, then calls
 `POST api/token` to obtain **short-lived** feed tokens (read for `apps`, read/write for `runtime`).
 So the credential that can push packages is never stored or passed at dispatch; it is minted per
-run and expires. Because `api/token` is an admin endpoint, set `ADMIN_CLIENT_ID` to include the
-deploy identity's client id (`AZURE_CLIENT_ID`) when you lock the deployment down, otherwise any
-caller in your tenant with a management token could request feed tokens.
+run and expires. Because `api/token` is an admin endpoint, the deploy workflow locks the admin
+endpoints to the deploy identity by default (`ADMIN_CLIENT_ID` defaults to `AZURE_CLIENT_ID`), so
+only the OIDC workflow can request feed tokens. Override the `ADMIN_CLIENT_ID` variable to widen
+that allow-list.
 
 To dispatch a workflow securely — without a user-bound Personal Access Token — the function app
 authenticates as a **GitHub App**. To enable runtime generation:
@@ -270,14 +270,28 @@ authenticates as a **GitHub App**. To enable runtime generation:
    setting (`GitHubApp__PrivateKey`) — encrypted at rest by Azure, but readable by anyone with
    config-read access to the app.
 4. No extra OIDC setup is needed — the workflow reuses the deploy identity and the existing
-   `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` secrets. If you set
-   `ADMIN_CLIENT_ID` to lock the deployment down, include the deploy identity's client id
-   (`AZURE_CLIENT_ID`) in it so the workflow can call `POST api/token`.
+   `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` secrets. The admin endpoints are
+   locked to that identity by default (see `ADMIN_CLIENT_ID` above), so the workflow can call
+   `POST api/token` out of the box; only override `ADMIN_CLIENT_ID` if you need to allow other callers.
 5. Make sure **Actions are enabled** on your fork (GitHub disables them on new forks by default),
    otherwise the dispatched workflow won't run.
 
 When these settings are absent the upload still succeeds; only the runtime workflow dispatch is
 skipped.
+
+#### Reusing the app for web-app sign-in
+
+The same GitHub App also powers the [token-management web app](#token-management-web-app) sign-in —
+no separate OAuth App or setting is needed. To enable the **Sign in with GitHub** button there, open
+the app (Settings → Developer settings → GitHub Apps → *your app* → General) and tick **Enable Device
+Flow**, then save. The web app automatically uses the same `GH_APP_CLIENT_ID`. Signing in needs **no
+extra permissions** — it only reads the user's login to check it against `WEBAPPUSERS`.
+
+The device flow returns a GitHub *user access token*. If the app has **Expire user authorization
+tokens** enabled (the default for new apps), that token lasts about 8 hours, after which web-app
+users are returned to the sign-in screen and must authorize again. Turn that setting off if you want
+longer-lived sessions. Personal-access-token sign-in always works regardless of this setting, so
+enabling device flow is optional.
 
 ### Regenerating for new Business Central versions
 
