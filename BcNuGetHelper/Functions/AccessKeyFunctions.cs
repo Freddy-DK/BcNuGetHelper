@@ -80,6 +80,10 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
             return new BadRequestObjectResult(
                 $"Name must be 1-{MaxNameLength} characters using letters, digits, '.', '-' or '_'.");
         }
+        if (AccessKeyStore.IsReservedName(name))
+        {
+            return new BadRequestObjectResult("Name uses a reserved prefix and cannot be assigned.");
+        }
 
         var feeds = request?.Feeds ?? [];
         if (feeds.Length == 0 || feeds.Any(f => !PackageBuilder.Feeds.Contains(f, StringComparer.OrdinalIgnoreCase)))
@@ -144,8 +148,9 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
             return new UnauthorizedResult();
         }
 
-        // Revoking expires the key immediately; the record is kept for auditing and can be renewed.
-        var key = await store.SetExpiryAsync(name, DateTimeOffset.UtcNow, ct);
+        // Revoking expires the key immediately and drops any rotation grace keys; the record is kept for
+        // auditing and can be renewed for a clean slate.
+        var key = await store.RevokeAsync(name, ct);
         if (key is null)
         {
             return new NotFoundResult();

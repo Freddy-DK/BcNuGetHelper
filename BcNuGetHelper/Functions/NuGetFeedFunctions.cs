@@ -245,6 +245,14 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             return new NotFoundResult();
         }
+
+        // Logo bytes come from attacker-controlled packages. Sandbox the response into an opaque origin
+        // with scripting disabled and force download on direct navigation, so a malicious SVG can never
+        // run against this origin (where admin GitHub tokens live). Inline <img> rendering is unaffected.
+        var headers = req.HttpContext.Response.Headers;
+        headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+        headers["X-Content-Type-Options"] = "nosniff";
+        headers.ContentDisposition = "attachment";
         return new FileStreamResult(logo.Value.Content, logo.Value.ContentType);
     }
 
@@ -311,7 +319,7 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         {
             return new NotFoundResult();
         }
-        if (!await IsAuthorizedAsync(req, feed, ct))
+        if (!await IsWorkflowAuthorizedAsync(req, ct))
         {
             return Unauthorized(req);
         }
@@ -392,6 +400,24 @@ public class NuGetFeedFunctions(FeedStorage storage, AccessKeyStore accessKeys)
         }
         var key = await accessKeys.FindByKeyAsync(token, ct);
         return key is not null && key.CanRead;
+    }
+
+    // Dependencies are internal build artifacts of the apps feed, consumed only by the runtime-generation
+    // workflow. They are never authorized against the caller-selected feed and never exposed through a
+    // public feed; only a short-lived ephemeral token (issued by the token endpoint to the workflow) grants
+    // access, always checked against the apps feed that actually owns the dependency.
+    private async Task<bool> IsWorkflowAuthorizedAsync(HttpRequest req, CancellationToken ct)
+    {
+        var token = ExtractToken(req);
+        if (string.IsNullOrEmpty(token))
+        {
+            return false;
+        }
+        var key = await accessKeys.FindByKeyAsync(token, ct);
+        return key is not null
+            && AccessKeyStore.IsWorkflowToken(key)
+            && key.CanRead
+            && key.Feeds.Contains(PackageBuilder.FeedApps, StringComparer.OrdinalIgnoreCase);
     }
 
     private static string? ExtractToken(HttpRequest req)

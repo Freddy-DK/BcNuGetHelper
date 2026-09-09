@@ -9,8 +9,8 @@ namespace BcNuGetHelper.Services;
 /// <summary>
 /// Validates Microsoft Entra bearer tokens on the admin endpoints (upload, access-key
 /// management), replacing Azure Functions host keys. A caller is authorized when the token
-/// is signed by the configured tenant, targets an allowed audience, and (when configured)
-/// was issued to an allowed client/application id.
+/// is signed by the configured tenant, targets an allowed audience, and was issued to an
+/// allowed client/application id (which must be configured; an empty allow-list authorizes no one).
 /// </summary>
 public class AdminAuthenticator
 {
@@ -68,7 +68,9 @@ public class AdminAuthenticator
         }
         if (_allowedClientIds.Length == 0)
         {
-            return true;
+            // Fail closed: without an explicit client allow-list any tenant member could authenticate,
+            // so an unconfigured allow-list authorizes no one.
+            return false;
         }
 
         // v2 tokens carry "azp", v1 tokens carry "appid".

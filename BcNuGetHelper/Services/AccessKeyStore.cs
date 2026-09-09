@@ -16,13 +16,23 @@ namespace BcNuGetHelper.Services;
 public class AccessKeyStore(BlobServiceClient blobServiceClient)
 {
     private const string BlobName = "accesskeys.json";
-    private const string EphemeralPrefix = "ephemeral-";
+    // The '|' separator is rejected by the access key name validator, so these internal prefixes can
+    // never collide with a user-assigned name.
+    private const string EphemeralPrefix = "ephemeral|";
+    // Short-lived tokens issued to the runtime-generation workflow by the token endpoint. Kept distinct
+    // from rotation grace keys (EphemeralPrefix) so only genuine workflow tokens are trusted for the
+    // internal dependency download endpoint.
+    private const string WorkflowTokenPrefix = "token|";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly BlobContainerClient _container = blobServiceClient.GetBlobContainerClient("config");
     private readonly SemaphoreSlim _lock = new(1, 1);
     private Dictionary<string, AccessKey>? _keys;
     private ETag? _etag;
+    // Bounds how long a revocation on another instance can go unnoticed: the cache is re-read from
+    // shared storage once it is older than this.
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
+    private DateTimeOffset _loadedAt;
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
@@ -88,7 +98,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
     }
 
     /// <summary>
-    /// Sets (or clears) a key's expiry. Used to revoke (expire now) or renew (extend/clear) a key.
+    /// Sets (or clears) a key's expiry. Used to renew (extend/clear) a key.
     /// Returns the updated key, or null when the name does not exist.
     /// </summary>
     public async Task<AccessKey?> SetExpiryAsync(string name, DateTimeOffset? expires, CancellationToken ct)
@@ -115,8 +125,37 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
     }
 
     /// <summary>
+    /// Revokes a key: expires it immediately and removes any rotation grace keys derived from it, so no
+    /// previously issued credential survives. Renewing afterwards therefore starts from a clean slate.
+    /// Returns the revoked key, or null when the name does not exist.
+    /// </summary>
+    public async Task<AccessKey?> RevokeAsync(string name, CancellationToken ct)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            await LoadCoreAsync(ct);
+            if (!_keys!.TryGetValue(name, out var existing))
+            {
+                return null;
+            }
+            var revoked = existing with { Expires = DateTimeOffset.UtcNow };
+            var updated = WithoutExpiredEphemeral(_keys!.Values);
+            updated[name] = revoked;
+            RemoveGraceKeys(updated, name);
+            await SaveAsync(updated, ct);
+            _keys = updated;
+            return revoked;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
     /// Rotates a key: issues a fresh active key under the same name and keeps the previous key value
-    /// alive for a grace period under a hidden <c>ephemeral-{name}</c> entry that expires after
+    /// alive for a grace period under a hidden <c>ephemeral|{name}</c> entry that expires after
     /// <paramref name="oldKeyLifetime"/>. Returns the new key, or null when the name does not exist.
     /// </summary>
     public async Task<AccessKey?> RotateAsync(string name, TimeSpan oldKeyLifetime, CancellationToken ct)
@@ -172,7 +211,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
                 var updated = WithoutExpiredEphemeral(_keys!.Values);
                 var expires = DateTimeOffset.UtcNow.Add(lifetime);
                 var created = specs
-                    .Select(spec => new AccessKey($"ephemeral-{Guid.NewGuid():N}", GenerateKey(), spec.Feeds, spec.Type, expires))
+                    .Select(spec => new AccessKey($"{WorkflowTokenPrefix}{Guid.NewGuid():N}", GenerateKey(), spec.Feeds, spec.Type, expires))
                     .ToList();
                 foreach (var key in created)
                 {
@@ -209,6 +248,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             }
             var updated = WithoutExpiredEphemeral(_keys.Values);
             updated.Remove(name);
+            RemoveGraceKeys(updated, name);
             await SaveAsync(updated, ct);
             _keys = updated;
             return true;
@@ -221,7 +261,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
 
     private async Task<Dictionary<string, AccessKey>> EnsureLoadedAsync(CancellationToken ct)
     {
-        if (_keys is null)
+        if (_keys is null || DateTimeOffset.UtcNow - _loadedAt > CacheTtl)
         {
             await LoadAsync(ct);
         }
@@ -242,6 +282,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
             _keys = new Dictionary<string, AccessKey>(StringComparer.OrdinalIgnoreCase);
             _etag = null;
         }
+        _loadedAt = DateTimeOffset.UtcNow;
     }
 
     private async Task SaveAsync(Dictionary<string, AccessKey> keys, CancellationToken ct)
@@ -261,8 +302,41 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
         _etag = response.Value.ETag;
     }
 
+    // Rotation grace keys and workflow tokens are both hidden from the UI and auto-pruned when expired.
     private static bool IsEphemeral(string name) =>
-        name.StartsWith(EphemeralPrefix, StringComparison.OrdinalIgnoreCase);
+        name.StartsWith(EphemeralPrefix, StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith(WorkflowTokenPrefix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when the key is a short-lived token issued to the runtime workflow by the token endpoint.</summary>
+    public static bool IsWorkflowToken(AccessKey key) =>
+        key.Name.StartsWith(WorkflowTokenPrefix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when a name uses a reserved internal prefix (workflow tokens or rotation grace keys) and must not be user-assigned.</summary>
+    public static bool IsReservedName(string name) => IsEphemeral(name);
+
+    // Removes rotation grace keys derived from a key so revoking or deleting it also kills the retained
+    // old credential (named "ephemeral|{name}" or, on collision, "ephemeral|{name}-{guid}").
+    private static void RemoveGraceKeys(Dictionary<string, AccessKey> keys, string name)
+    {
+        foreach (var graceName in keys.Keys.Where(k => IsGraceKeyOf(k, name)).ToList())
+        {
+            keys.Remove(graceName);
+        }
+    }
+
+    private static bool IsGraceKeyOf(string keyName, string baseName)
+    {
+        var prefix = EphemeralPrefix + baseName;
+        if (!keyName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        // Match only the exact grace name or the collision-avoidance "-{guid:N}" (32 hex) suffix, so a key
+        // named "foo" never sweeps away the grace key of a different key named "foo-bar".
+        var suffix = keyName[prefix.Length..];
+        return suffix.Length == 0
+            || (suffix.Length == 33 && suffix[0] == '-' && suffix[1..].All(Uri.IsHexDigit));
+    }
 
     // Drops expired ephemeral (token-endpoint) keys so they don't accumulate; keeps everything else.
     private static Dictionary<string, AccessKey> WithoutExpiredEphemeral(IEnumerable<AccessKey> keys) =>
