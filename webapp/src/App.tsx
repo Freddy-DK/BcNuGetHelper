@@ -616,7 +616,7 @@ function KeyRow({
         ) : (
           <>
             <button className="btn tiny" onClick={rotate} disabled={busy}>
-              Renew
+              Rotate
             </button>
             <button className="btn tiny warn" onClick={revoke} disabled={busy}>
               Revoke
