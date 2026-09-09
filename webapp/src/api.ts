@@ -1,18 +1,17 @@
 import type { AccessKey, ConfigResponse, CreateKeyInput, MeResponse } from './types';
 
-/** Resolve the backend base URL (…/api). */
+/**
+ * Resolve the backend base URL (…/api). Always same-origin — the app is served by the Function App
+ * at /api/app, so the API is at /api on the same origin. There is deliberately no query-parameter
+ * override: allowing one would let a crafted link send the signed-in GitHub token to an attacker.
+ */
 export function resolveBackendUrl(): string {
-  const params = new URLSearchParams(window.location.search);
-  const explicit = params.get('backendUrl');
-  if (explicit) return explicit.replace(/\/+$/, '');
-
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1') {
     // Vite dev server; talk to the local Functions host.
     return 'http://localhost:7071/api';
   }
 
-  // Served from the Function App at /api/app, so the API lives at the same origin under /api.
   return `${window.location.origin}/api`;
 }
 
@@ -104,11 +103,22 @@ export function rotateAccessKey(
   backendUrl: string,
   token: string,
   name: string,
-  oldKeyValidHours: number,
+  oldKeyValidDays: number,
 ): Promise<AccessKey> {
   return request<AccessKey>(backendUrl, token, `accesskeys/${encodeURIComponent(name)}/rotate`, {
     method: 'POST',
-    body: JSON.stringify({ oldKeyValidHours }),
+    body: JSON.stringify({ oldKeyValidDays }),
+  });
+}
+
+export function rotateAllAccessKeys(
+  backendUrl: string,
+  token: string,
+  oldKeyValidDays: number,
+): Promise<{ rotated: string[] }> {
+  return request<{ rotated: string[] }>(backendUrl, token, 'accesskeys/rotate-all', {
+    method: 'POST',
+    body: JSON.stringify({ oldKeyValidDays }),
   });
 }
 

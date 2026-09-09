@@ -274,6 +274,11 @@ fieldset legend {
   justify-content: space-between;
 }
 
+.keys-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border);

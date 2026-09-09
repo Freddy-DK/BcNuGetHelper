@@ -10,6 +10,7 @@ import {
   resolveBackendUrl,
   revokeAccessKey,
   rotateAccessKey,
+  rotateAllAccessKeys,
 } from './api';
 import {
   clearToken,
@@ -257,6 +258,31 @@ function Dashboard({
     load();
   }, [load]);
 
+  const activeCount = keys.filter((k) => !isInactive(k)).length;
+
+  const rotateAll = useCallback(async () => {
+    const input = window.prompt(
+      'Rotate ALL active keys: each gets a new key now, with its old key valid for a grace period.\nHow many days should the current keys stay valid?',
+      '7',
+    );
+    if (input === null) return;
+    const days = Number(input);
+    if (!Number.isInteger(days) || days <= 0) {
+      setError('Enter a positive whole number of days.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await rotateAllAccessKeys(BACKEND_URL, token, days);
+      setKeys(await listAccessKeys(BACKEND_URL, token));
+    } catch (err) {
+      handleError(err, setError, onSignOut);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onSignOut]);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -283,9 +309,14 @@ function Dashboard({
         <section className="keys">
           <div className="keys-head">
             <h2>Access keys</h2>
-            <button className="btn small" onClick={load} disabled={loading}>
-              {loading ? 'Refreshing…' : 'Refresh'}
-            </button>
+            <div className="keys-actions">
+              <button className="btn small" onClick={rotateAll} disabled={loading || activeCount === 0}>
+                Rotate all
+              </button>
+              <button className="btn small" onClick={load} disabled={loading}>
+                {loading ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
           </div>
 
           {loading && keys.length === 0 ? (
@@ -563,16 +594,16 @@ function KeyRow({
   const rotate = () =>
     run(async () => {
       const input = window.prompt(
-        'Rotate this key: issue a new key now and keep the current one valid for a grace period.\nHow many hours should the current key stay valid?',
-        '24',
+        'Rotate this key: issue a new key now and keep the current one valid for a grace period.\nHow many days should the current key stay valid?',
+        '7',
       );
       if (input === null) return;
-      const hours = Number(input);
-      if (!Number.isInteger(hours) || hours <= 0) {
-        onError(new Error('Enter a positive whole number of hours.'));
+      const days = Number(input);
+      if (!Number.isInteger(days) || days <= 0) {
+        onError(new Error('Enter a positive whole number of days.'));
         return;
       }
-      await rotateAccessKey(BACKEND_URL, token, accessKey.name, hours);
+      await rotateAccessKey(BACKEND_URL, token, accessKey.name, days);
       await onReload();
     });
 

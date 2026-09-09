@@ -21,7 +21,7 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
 
     public record RenewRequest(int? ExpiresInDays);
 
-    public record RotateRequest(int? OldKeyValidHours);
+    public record RotateRequest(int? OldKeyValidDays);
 
     private async Task<bool> AuthorizedAsync(HttpRequest req, CancellationToken ct) =>
         await admin.IsAuthorizedAsync(req, ct) || await github.IsAuthorizedAsync(req, ct);
@@ -219,13 +219,13 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
             return new BadRequestObjectResult("Invalid JSON body.");
         }
 
-        if (request?.OldKeyValidHours is not { } hours || hours <= 0)
+        if (request?.OldKeyValidDays is not { } days || days <= 0)
         {
-            return new BadRequestObjectResult("\"oldKeyValidHours\" must be a positive number of hours.");
+            return new BadRequestObjectResult("\"oldKeyValidDays\" must be a positive number of days.");
         }
 
         // Issues a new active key and keeps the old key value valid for the grace period.
-        var key = await store.RotateAsync(name, TimeSpan.FromHours(hours), ct);
+        var key = await store.RotateAsync(name, TimeSpan.FromDays(days), ct);
         if (key is null)
         {
             return new NotFoundResult();
@@ -234,10 +234,59 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
         var baseUrl = $"{req.Scheme}://{req.Host}";
         await notifier.NotifyAsync("rotated", key, new Dictionary<string, string>
         {
-            ["oldkeyhours"] = hours.ToString(),
+            ["oldkeydays"] = days.ToString(),
             ["baseurl"] = baseUrl,
         }, ct);
         return new OkObjectResult(key);
+    }
+
+    [Function("RotateAllAccessKeys")]
+    public async Task<IActionResult> RotateAll(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "accesskeys/rotate-all")] HttpRequest req,
+        CancellationToken ct)
+    {
+        if (!await AuthorizedAsync(req, ct))
+        {
+            return new UnauthorizedResult();
+        }
+
+        RotateRequest? request;
+        try
+        {
+            request = await JsonSerializer.DeserializeAsync<RotateRequest>(req.Body, JsonOptions, ct);
+        }
+        catch (JsonException)
+        {
+            return new BadRequestObjectResult("Invalid JSON body.");
+        }
+
+        if (request?.OldKeyValidDays is not { } days || days <= 0)
+        {
+            return new BadRequestObjectResult("\"oldKeyValidDays\" must be a positive number of days.");
+        }
+
+        var lifetime = TimeSpan.FromDays(days);
+        var baseUrl = $"{req.Scheme}://{req.Host}";
+
+        // Rotate every active key; ListAsync already excludes ephemeral keys, and revoked/expired are skipped.
+        var active = (await store.ListAsync(ct)).Where(k => !k.IsExpired).Select(k => k.Name).ToList();
+        var rotated = new List<string>();
+        foreach (var keyName in active)
+        {
+            var newKey = await store.RotateAsync(keyName, lifetime, ct);
+            if (newKey is null)
+            {
+                continue;
+            }
+            rotated.Add(newKey.Name);
+            await notifier.NotifyAsync("rotated", newKey, new Dictionary<string, string>
+            {
+                ["oldkeydays"] = days.ToString(),
+                ["baseurl"] = baseUrl,
+            }, ct);
+        }
+
+        return new OkObjectResult(new { rotated });
     }
 
     [Function("DeleteAccessKey")]

@@ -51,7 +51,8 @@ Access keys are managed through Entra-protected endpoints (also usable by allow-
 | `POST api/accesskeys/{name}` | Create an access key. Body: `{ "feeds": ["apps", "runtime", "symbols"], "type": "read", "description": "who it is for", "email": "notify@example.com", "expiresInDays": 90 }`. `email` is **required** (used to notify when the key changes); `type` (`read`, `write` or `readwrite`, default `read`), `description` and `expiresInDays` are optional. The name is at most 64 characters (letters, digits, `.`, `-`, `_`), description at most 200 and e-mail at most 200. Returns the generated key |
 | `POST api/accesskeys/{name}/revoke` | Revoke a key (expire it immediately, keeping the record) |
 | `POST api/accesskeys/{name}/renew` | Renew a key. Optional body `{ "expiresInDays": 90 }`; omit for no expiry |
-| `POST api/accesskeys/{name}/rotate` | Rotate a key: issue a new active key under the same name and keep the previous key value valid for a grace period. Body `{ "oldKeyValidHours": 24 }` |
+| `POST api/accesskeys/{name}/rotate` | Rotate a key: issue a new active key under the same name and keep the previous key value valid for a grace period. Body `{ "oldKeyValidDays": 7 }` |
+| `POST api/accesskeys/rotate-all` | Rotate every active key (skips expired/revoked and ephemeral keys). Body `{ "oldKeyValidDays": 7 }` |
 | `DELETE api/accesskeys/{name}` | Remove an access key permanently |
 | `POST api/token` | Issue **short-lived** feed tokens (a `read` token for `apps` and a `readwrite` token for `runtime`). Used by the runtime workflow, which authenticates with a Microsoft Entra token obtained via GitHub OIDC — so no long-lived credential is passed at dispatch |
 
@@ -234,8 +235,9 @@ Once signed in, allowed users can:
   all), an access level (`read`, `write`, `readwrite`) and an optional expiry.
 - **Revoke** a key (expires it immediately but keeps the record).
 - **Renew** a key. For a revoked or expiring key this extends (or clears) its expiry. For an **active**
-  key it **rotates** the key: a new key value is issued immediately and the previous value keeps
-  working for a grace period you choose (in hours), so consumers can switch over without downtime.
+  key the button is labelled **Rotate**: a new key value is issued immediately and the previous value
+  keeps working for a grace period you choose (in days), so consumers can switch over without downtime.
+  **Rotate all** does the same for every active key at once.
 - **Remove** a key permanently.
 
 The same operations are available on the [access key endpoints](#endpoints) using a Microsoft
@@ -263,7 +265,7 @@ The messages come from the [`email-templates/`](email-templates) folder — one 
 placeholders `{{feeds}}`, `{{feedurls}}` (feed names with their `index.json` links, used in
 `created.html`/`rotated.html`), `{{type}}` (access level), `{{key}}` (the access key), `{{expires}}`,
 `{{email}}`, `{{sender}}` (the sign-off name — `Smtp__FromName` if set, otherwise the `SMTP_FROM`
-address) and, in `rotated.html`, `{{oldkeyhours}}` (grace hours the old key stays valid). Values are
+address) and, in `rotated.html`, `{{oldkeydays}}` (grace days the old key stays valid). Values are
 HTML-encoded, and the internal key name and description are intentionally **not** available. Customize
 the notifications by editing these files in your fork.
 
