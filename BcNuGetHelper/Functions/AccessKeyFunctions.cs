@@ -228,6 +228,10 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
         {
             return new BadRequestObjectResult("\"oldKeyValidDays\" must be a positive number of days.");
         }
+        if (AccessKeyStore.IsReservedName(name))
+        {
+            return new BadRequestObjectResult("Ephemeral keys cannot be rotated.");
+        }
 
         // Issues a new active key and keeps the old key value valid for the grace period.
         var key = await store.RotateAsync(name, TimeSpan.FromDays(days), ct);
@@ -273,8 +277,11 @@ public class AccessKeyFunctions(AccessKeyStore store, AdminAuthenticator admin, 
         var lifetime = TimeSpan.FromDays(days);
         var baseUrl = $"{req.Scheme}://{req.Host}";
 
-        // Rotate every active key; ListAsync already excludes ephemeral keys, and revoked/expired are skipped.
-        var active = (await store.ListAsync(ct)).Where(k => !k.IsExpired).Select(k => k.Name).ToList();
+        // Rotate every active named key; ephemeral keys and revoked/expired keys are skipped.
+        var active = (await store.ListAsync(ct))
+            .Where(k => !k.IsExpired && !AccessKeyStore.IsReservedName(k.Name))
+            .Select(k => k.Name)
+            .ToList();
         var rotated = new List<string>();
         foreach (var keyName in active)
         {

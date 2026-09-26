@@ -19,6 +19,8 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
     // The '|' separator is rejected by the access key name validator, so these internal prefixes can
     // never collide with a user-assigned name.
     private const string EphemeralPrefix = "ephemeral|";
+    // Grace keys and workflow tokens created by earlier versions used this prefix.
+    private const string LegacyEphemeralPrefix = "ephemeral-";
     // Short-lived tokens issued to the runtime-generation workflow by the token endpoint. Kept distinct
     // from rotation grace keys (EphemeralPrefix) so only genuine workflow tokens are trusted for the
     // internal dependency download endpoint.
@@ -50,7 +52,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
     public async Task<AccessKey?> GetAsync(string name, CancellationToken ct) =>
         (await EnsureLoadedAsync(ct)).GetValueOrDefault(name);
 
-    /// <summary>Returns the named access keys, reloading from storage so the management UI stays fresh. Short-lived ephemeral keys (issued by the token endpoint) are never shown.</summary>
+    /// <summary>Returns the access keys, reloading from storage so the management UI stays fresh. Ephemeral keys are only included while active.</summary>
     public async Task<IReadOnlyList<AccessKey>> ListAsync(CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
@@ -58,7 +60,7 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
         {
             await LoadCoreAsync(ct);
             return _keys!.Values
-                .Where(k => !IsEphemeral(k.Name))
+                .Where(k => !(IsEphemeral(k.Name) && k.IsExpired))
                 .OrderBy(k => k.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
@@ -302,9 +304,10 @@ public class AccessKeyStore(BlobServiceClient blobServiceClient)
         _etag = response.Value.ETag;
     }
 
-    // Rotation grace keys and workflow tokens are both hidden from the UI and auto-pruned when expired.
+    // Rotation grace keys and workflow tokens are hidden from the UI and auto-pruned once expired.
     private static bool IsEphemeral(string name) =>
         name.StartsWith(EphemeralPrefix, StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith(LegacyEphemeralPrefix, StringComparison.OrdinalIgnoreCase)
         || name.StartsWith(WorkflowTokenPrefix, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>True when the key is a short-lived token issued to the runtime workflow by the token endpoint.</summary>

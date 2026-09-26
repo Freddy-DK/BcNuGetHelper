@@ -258,7 +258,7 @@ function Dashboard({
     load();
   }, [load]);
 
-  const activeCount = keys.filter((k) => !isInactive(k)).length;
+  const activeCount = keys.filter((k) => !isInactive(k) && !isEphemeral(k)).length;
 
   const rotateAll = useCallback(async () => {
     const input = window.prompt(
@@ -547,9 +547,10 @@ function KeyRow({
 }) {
   const [busy, setBusy] = useState(false);
   const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const inactive = isInactive(accessKey);
+  const ephemeral = isEphemeral(accessKey);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -562,15 +563,18 @@ function KeyRow({
     }
   };
 
-  const copy = async () => {
+  const copy = async (id: string, text: string) => {
     try {
-      await navigator.clipboard.writeText(accessKey.key);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      await navigator.clipboard.writeText(text);
+      setCopied(id);
+      setTimeout(() => setCopied(null), 1500);
     } catch {
       setRevealed(true);
     }
   };
+
+  const copyFeed = (feed: string) =>
+    copy(feed, JSON.stringify({ token: accessKey.key, serverUrl: `${BACKEND_URL}/${encodeURIComponent(feed)}/index.json` }));
 
   const revoke = () =>
     run(async () => {
@@ -620,11 +624,23 @@ function KeyRow({
       <td>{accessKey.description ?? <span className="muted">—</span>}</td>
       <td>{accessKey.email ?? <span className="muted">—</span>}</td>
       <td>
-        {accessKey.feeds.map((f) => (
-          <span className="badge" key={f}>
-            {f}
-          </span>
-        ))}
+        {accessKey.feeds.map((f) =>
+          inactive ? (
+            <span className="badge" key={f}>
+              {f}
+            </span>
+          ) : (
+            <button
+              className="badge badge-btn"
+              key={f}
+              onClick={() => copyFeed(f)}
+              disabled={busy}
+              title={`Copy {"token","serverUrl"} JSON for the ${f} feed`}
+            >
+              {copied === f ? 'Copied' : f}
+            </button>
+          ),
+        )}
       </td>
       <td>{accessKey.type ?? 'read'}</td>
       <td>
@@ -635,8 +651,8 @@ function KeyRow({
         <span title={revealed ? accessKey.key : undefined}>
           {revealed ? accessKey.key : mask(accessKey.key)}
         </span>
-        <button className="btn tiny" onClick={copy} disabled={busy}>
-          {copied ? 'Copied' : 'Copy'}
+        <button className="btn tiny" onClick={() => copy('key', accessKey.key)} disabled={busy}>
+          {copied === 'key' ? 'Copied' : 'Copy'}
         </button>
       </td>
       <td className="actions">
@@ -646,9 +662,11 @@ function KeyRow({
           </button>
         ) : (
           <>
-            <button className="btn tiny" onClick={rotate} disabled={busy}>
-              Rotate
-            </button>
+            {!ephemeral && (
+              <button className="btn tiny" onClick={rotate} disabled={busy}>
+                Rotate
+              </button>
+            )}
             <button className="btn tiny warn" onClick={revoke} disabled={busy}>
               Revoke
             </button>
@@ -664,6 +682,11 @@ function KeyRow({
 
 function isInactive(key: AccessKey): boolean {
   return key.expires !== null && new Date(key.expires).getTime() <= Date.now();
+}
+
+// Mirrors AccessKeyStore.IsEphemeral: rotation grace keys and workflow tokens.
+function isEphemeral(key: AccessKey): boolean {
+  return /^(ephemeral[|-]|token\|)/i.test(key.name);
 }
 
 function mask(key: string): string {

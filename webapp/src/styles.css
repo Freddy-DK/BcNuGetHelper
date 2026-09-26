@@ -318,6 +318,17 @@ fieldset legend {
   font-size: 12px;
 }
 
+.badge-btn {
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.badge-btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
 .status {
   font-size: 12px;
   padding: 2px 8px;
